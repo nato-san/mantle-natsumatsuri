@@ -1,7 +1,15 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { Customer, FestivalResponse, FestivalState, Shop, ShopStats } from "@/lib/festival-types";
+import { createPublicClient, createWalletClient, custom, http, parseEther, type Address, type EIP1193Provider } from "viem";
+import type { Customer, FestivalResponse, FestivalState, PaymentMode, Shop, ShopStats } from "@/lib/festival-types";
+import { mantleSepolia, mantleSepoliaAddChainParameter } from "@/lib/mantle-sepolia";
+
+declare global {
+  interface Window {
+    ethereum?: EIP1193Provider;
+  }
+}
 
 type Screen = "home" | "customer" | "merchant" | "settings";
 
@@ -38,6 +46,7 @@ const fallbackShops: Shop[] = [
 const initialState: FestivalState = {
   festivalName: "わがやのなつまつり",
   exchangeRateJpyPerMnt: INITIAL_EXCHANGE_RATE,
+  paymentMode: "demo",
   shops: fallbackShops,
   customers: [],
   payments: [],
@@ -85,6 +94,18 @@ function calculateMntPrice(priceJpy: number, exchangeRateJpyPerMnt: number) {
   return priceJpy / Math.max(1, exchangeRateJpyPerMnt);
 }
 
+function isAddressLike(value?: string) {
+  return /^0x[a-fA-F0-9]{40}$/.test(value || "");
+}
+
+function toMntAmount(value: number) {
+  return value.toFixed(8).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function shortHash(value: string) {
+  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("ja-JP", {
     hour: "2-digit",
@@ -94,6 +115,70 @@ function formatTime(value: string) {
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function ensureMantleSepolia(provider: EIP1193Provider) {
+  const chainId = await provider.request({ method: "eth_chainId" });
+
+  if (chainId === mantleSepoliaAddChainParameter.chainId) {
+    return;
+  }
+
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: mantleSepoliaAddChainParameter.chainId }],
+    });
+  } catch (error) {
+    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+
+    if (code !== 4902) {
+      throw error;
+    }
+
+    await provider.request({
+      method: "wallet_addEthereumChain",
+      params: [mantleSepoliaAddChainParameter],
+    });
+  }
+}
+
+async function sendMantleSepoliaPayment(shop: Shop, priceMnt: number) {
+  const provider = window.ethereum;
+
+  if (!provider) {
+    throw new Error("wallet_missing");
+  }
+
+  if (!isAddressLike(shop.recipientAddress)) {
+    throw new Error("recipient_missing");
+  }
+
+  await ensureMantleSepolia(provider);
+
+  const walletClient = createWalletClient({
+    chain: mantleSepolia,
+    transport: custom(provider),
+  });
+  const [account] = await walletClient.requestAddresses();
+  const hash = await walletClient.sendTransaction({
+    account,
+    to: shop.recipientAddress as Address,
+    value: parseEther(toMntAmount(priceMnt)),
+  });
+
+  const publicClient = createPublicClient({
+    chain: mantleSepolia,
+    transport: http(),
+  });
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+
+  return {
+    transactionHash: hash,
+    blockNumber: Number(receipt.blockNumber),
+    gasUsed: receipt.gasUsed.toString(),
+    status: receipt.status === "success" ? ("confirmed" as const) : ("failed" as const),
+  };
 }
 
 export default function Home() {
@@ -118,6 +203,7 @@ export default function Home() {
         setFestival({
           festivalName: nextFestival.festivalName,
           exchangeRateJpyPerMnt: nextFestival.exchangeRateJpyPerMnt,
+          paymentMode: nextFestival.paymentMode,
           shops: nextFestival.shops,
           customers: nextFestival.customers,
           payments: nextFestival.payments,
@@ -168,6 +254,7 @@ export default function Home() {
     setFestival({
       festivalName: nextFestival.festivalName,
       exchangeRateJpyPerMnt: nextFestival.exchangeRateJpyPerMnt,
+      paymentMode: nextFestival.paymentMode,
       shops: nextFestival.shops,
       customers: nextFestival.customers,
       payments: nextFestival.payments,
@@ -184,9 +271,23 @@ export default function Home() {
     }
 
     setConfirmShopId(null);
-    setStatusMessage("おみせに送っています");
+    setStatusMessage(festival.paymentMode === "mantle-sepolia" ? "MNTのおさいふを開いています" : "おみせに送っています");
 
     try {
+      const chainData =
+        festival.paymentMode === "mantle-sepolia"
+          ? await sendMantleSepoliaPayment(shop, priceMnt)
+          : {
+              status: "recorded" as const,
+            };
+
+      if (chainData.status === "failed") {
+        setStatusMessage("MNTを送れませんでした");
+        await refreshFestival();
+        return;
+      }
+
+      setStatusMessage("おみせに記録しています");
       const response = await fetch("/api/festival", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -194,6 +295,11 @@ export default function Home() {
           action: "purchase",
           customerId: currentCustomer.id,
           shopId: shop.id,
+          mode: festival.paymentMode,
+          status: chainData.status,
+          transactionHash: "transactionHash" in chainData ? chainData.transactionHash : undefined,
+          blockNumber: "blockNumber" in chainData ? chainData.blockNumber : undefined,
+          gasUsed: "gasUsed" in chainData ? chainData.gasUsed : undefined,
         }),
       });
 
@@ -206,12 +312,22 @@ export default function Home() {
       setSuccessItemName(shop.name);
       setStatusMessage("");
       await refreshFestival();
-    } catch {
-      setStatusMessage("おみせにつながりません");
+    } catch (error) {
+      if (error instanceof Error && error.message === "wallet_missing") {
+        setStatusMessage("MNTのおさいふが見つかりません");
+        return;
+      }
+      if (error instanceof Error && error.message === "recipient_missing") {
+        setStatusMessage("おみせの受け取り先がありません");
+        return;
+      }
+      setStatusMessage(festival.paymentMode === "mantle-sepolia" ? "MNTを送れませんでした" : "おみせにつながりません");
     }
   }
 
-  async function saveSettings(nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "shops">) {
+  async function saveSettings(
+    nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "paymentMode" | "shops">,
+  ) {
     setFestival((current) => ({ ...current, ...nextSettings }));
     setStatusMessage("設定を保存中");
 
@@ -234,6 +350,7 @@ export default function Home() {
     void saveSettings({
       festivalName,
       exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
+      paymentMode: festival.paymentMode,
       shops: festival.shops,
     });
   }
@@ -242,6 +359,16 @@ export default function Home() {
     void saveSettings({
       festivalName: festival.festivalName,
       exchangeRateJpyPerMnt,
+      paymentMode: festival.paymentMode,
+      shops: festival.shops,
+    });
+  }
+
+  function updatePaymentMode(paymentMode: PaymentMode) {
+    void saveSettings({
+      festivalName: festival.festivalName,
+      exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
+      paymentMode,
       shops: festival.shops,
     });
   }
@@ -251,6 +378,7 @@ export default function Home() {
     void saveSettings({
       festivalName: festival.festivalName,
       exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
+      paymentMode: festival.paymentMode,
       shops,
     });
   }
@@ -268,6 +396,7 @@ export default function Home() {
     void saveSettings({
       festivalName: festival.festivalName,
       exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
+      paymentMode: festival.paymentMode,
       shops: [...festival.shops, shop],
     });
     setSelectedShopId(shop.id);
@@ -282,6 +411,7 @@ export default function Home() {
     void saveSettings({
       festivalName: festival.festivalName,
       exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
+      paymentMode: festival.paymentMode,
       shops,
     });
   }
@@ -340,6 +470,7 @@ export default function Home() {
           <CustomerScreen
             customer={currentCustomer}
             exchangeRateJpyPerMnt={festival.exchangeRateJpyPerMnt}
+            paymentMode={festival.paymentMode}
             shops={festival.shops}
             successItemName={successItemName}
             statusMessage={statusMessage}
@@ -355,6 +486,7 @@ export default function Home() {
             shopStats={shopStats}
             total={festivalTotal}
             exchangeRateJpyPerMnt={festival.exchangeRateJpyPerMnt}
+            paymentMode={festival.paymentMode}
             onSelectShop={setSelectedShopId}
           />
         ) : null}
@@ -365,6 +497,7 @@ export default function Home() {
             statusMessage={statusMessage}
             onFestivalNameChange={updateFestivalName}
             onExchangeRateChange={updateExchangeRate}
+            onPaymentModeChange={updatePaymentMode}
             onShopChange={updateShop}
             onAddShop={addShop}
             onDeleteShop={deleteShop}
@@ -438,6 +571,7 @@ function HomeScreen({
 function CustomerScreen({
   customer,
   exchangeRateJpyPerMnt,
+  paymentMode,
   shops,
   successItemName,
   statusMessage,
@@ -446,6 +580,7 @@ function CustomerScreen({
 }: {
   customer: Customer;
   exchangeRateJpyPerMnt: number;
+  paymentMode: PaymentMode;
   shops: Shop[];
   successItemName: string | null;
   statusMessage: string;
@@ -457,6 +592,9 @@ function CustomerScreen({
       <div className="mb-4 rounded-[24px] bg-white p-4 text-center shadow-sm">
         <p className="text-lg font-black text-[#8a3b1e]">げんざいの 1 MNT のねだん</p>
         <p className="mt-1 text-3xl font-black">1 MNT = {formatYen(exchangeRateJpyPerMnt)}円</p>
+        <p className="mt-2 text-sm font-black text-[#7b4b21]">
+          {paymentMode === "mantle-sepolia" ? "MNTのおさいふで はらう" : "れんしゅうモード"}
+        </p>
       </div>
 
       <div className="rounded-[28px] bg-[#ffed9f] p-5 text-center shadow-sm">
@@ -520,6 +658,7 @@ function MerchantScreen({
   shopStats,
   total,
   exchangeRateJpyPerMnt,
+  paymentMode,
   onSelectShop,
 }: {
   selectedShopId: string;
@@ -537,6 +676,7 @@ function MerchantScreen({
   }[];
   total: number;
   exchangeRateJpyPerMnt: number;
+  paymentMode: PaymentMode;
   onSelectShop: (shopId: string) => void;
 }) {
   if (!selectedStats) {
@@ -549,7 +689,9 @@ function MerchantScreen({
         <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#99dac7]">Festival Total</p>
         <div className="mt-2 flex items-end justify-between gap-4">
           <p className="text-4xl font-black">{formatMnt(total)} MNT</p>
-          <p className="pb-1 text-sm font-bold text-white/70">Mantle Sepolia / Demo</p>
+          <p className="pb-1 text-sm font-bold text-white/70">
+            {paymentMode === "mantle-sepolia" ? "Mantle Sepolia / On-chain" : "Mantle Sepolia / Demo"}
+          </p>
         </div>
       </div>
 
@@ -576,7 +718,7 @@ function MerchantScreen({
       </div>
 
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <Metric label="NETWORK" value="Mantle Sepolia / Demo" />
+        <Metric label="NETWORK" value={paymentMode === "mantle-sepolia" ? "Mantle Sepolia / On-chain" : "Mantle Sepolia / Demo"} />
         <Metric label="1 MNTのねだん" value={`${formatYen(exchangeRateJpyPerMnt)}円`} />
       </div>
 
@@ -594,6 +736,16 @@ function MerchantScreen({
                   <p className="text-xs font-bold text-[#99dac7]">
                     {formatYen(record.priceJpy)}円 / 1 MNTのねだん {formatYen(record.exchangeRateJpyPerMnt)}円
                   </p>
+                  {record.transactionHash ? (
+                    <a
+                      className="mt-1 inline-block text-xs font-black text-[#f8d45d] underline"
+                      href={`https://explorer.sepolia.mantle.xyz/tx/${record.transactionHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Tx {shortHash(record.transactionHash)}
+                    </a>
+                  ) : null}
                 </div>
                 <p className="font-mono text-lg font-black text-[#f8d45d]">+{formatMnt(record.priceMnt)} MNT</p>
               </div>
@@ -621,6 +773,7 @@ function SettingsScreen({
   statusMessage,
   onFestivalNameChange,
   onExchangeRateChange,
+  onPaymentModeChange,
   onShopChange,
   onAddShop,
   onDeleteShop,
@@ -630,6 +783,7 @@ function SettingsScreen({
   statusMessage: string;
   onFestivalNameChange: (name: string) => void;
   onExchangeRateChange: (exchangeRateJpyPerMnt: number) => void;
+  onPaymentModeChange: (paymentMode: PaymentMode) => void;
   onShopChange: (shopId: string, nextShop: Partial<Shop>) => void;
   onAddShop: () => void;
   onDeleteShop: (shopId: string) => void;
@@ -693,6 +847,33 @@ function SettingsScreen({
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mt-4 rounded-lg bg-white p-4 shadow-sm">
+        <p className="field-label">支払いモード</p>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <button
+            className={`touch-button small-button ${
+              festival.paymentMode === "demo" ? "bg-[#ffdf63]" : "bg-[#f7efe2]"
+            }`}
+            type="button"
+            onClick={() => onPaymentModeChange("demo")}
+          >
+            れんしゅう
+          </button>
+          <button
+            className={`touch-button small-button ${
+              festival.paymentMode === "mantle-sepolia" ? "bg-[#7bd7c6]" : "bg-[#f7efe2]"
+            }`}
+            type="button"
+            onClick={() => onPaymentModeChange("mantle-sepolia")}
+          >
+            test MNT
+          </button>
+        </div>
+        <p className="mt-3 text-sm font-bold leading-6 text-[#6b4b2f]">
+          test MNTでは、お客さん端末のウォレットから Mantle Sepolia で送ります。うまくいかない時は、れんしゅうに戻せます。
+        </p>
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-3">
@@ -771,6 +952,22 @@ function SettingsScreen({
                   onChange={(event) => onShopChange(shop.id, { actionLabel: event.target.value })}
                 />
               </div>
+            </div>
+
+            <div className="mt-3">
+              <label className="field-label" htmlFor={`${shop.id}-recipient`}>
+                test MNTの受け取り先
+              </label>
+              <input
+                id={`${shop.id}-recipient`}
+                className="text-field mt-2 font-mono text-sm"
+                placeholder="0x..."
+                value={shop.recipientAddress || ""}
+                onChange={(event) => onShopChange(shop.id, { recipientAddress: event.target.value.trim() })}
+              />
+              {festival.paymentMode === "mantle-sepolia" && !isAddressLike(shop.recipientAddress) ? (
+                <p className="mt-2 text-sm font-black text-[#b62e22]">test MNTで使うには受け取り先が必要です</p>
+              ) : null}
             </div>
 
             <div className="mt-4 flex justify-end">

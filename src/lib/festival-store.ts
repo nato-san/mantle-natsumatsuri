@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Customer, FestivalState, PaymentRecord, Shop } from "./festival-types";
+import type { Customer, FestivalState, PaymentMode, PaymentRecord, Shop } from "./festival-types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DATA_FILE = path.join(DATA_DIR, "festival-state.json");
@@ -37,6 +37,7 @@ export const defaultShops: Shop[] = [
 const initialState: FestivalState = {
   festivalName: "わがやのなつまつり",
   exchangeRateJpyPerMnt: INITIAL_EXCHANGE_RATE,
+  paymentMode: "demo",
   shops: defaultShops,
   customers: [],
   payments: [],
@@ -75,6 +76,7 @@ export async function readState(): Promise<FestivalState> {
         typeof parsed.exchangeRateJpyPerMnt === "number" && parsed.exchangeRateJpyPerMnt > 0
           ? parsed.exchangeRateJpyPerMnt
           : initialState.exchangeRateJpyPerMnt,
+      paymentMode: parsed.paymentMode === "mantle-sepolia" ? "mantle-sepolia" : "demo",
       shops: Array.isArray(parsed.shops) && parsed.shops.length > 0 ? parsed.shops : defaultShops,
       customers: Array.isArray(parsed.customers) ? parsed.customers : [],
       payments: Array.isArray(parsed.payments) ? parsed.payments : [],
@@ -103,12 +105,15 @@ export async function ensureCustomer(customerId: string) {
   return { ...nextState, currentCustomer: nextCustomer };
 }
 
-export async function updateSettings(nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "shops">) {
+export async function updateSettings(
+  nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "paymentMode" | "shops">,
+) {
   const state = await readState();
   const nextState: FestivalState = {
     ...state,
     festivalName: nextSettings.festivalName,
     exchangeRateJpyPerMnt: Math.max(1, nextSettings.exchangeRateJpyPerMnt),
+    paymentMode: nextSettings.paymentMode,
     shops: nextSettings.shops.length > 0 ? nextSettings.shops : state.shops,
   };
 
@@ -116,7 +121,15 @@ export async function updateSettings(nextSettings: Pick<FestivalState, "festival
   return nextState;
 }
 
-export async function recordPurchase(customerId: string, shopId: string) {
+type PurchaseChainData = {
+  mode?: PaymentMode;
+  status?: PaymentRecord["status"];
+  transactionHash?: string;
+  blockNumber?: number;
+  gasUsed?: string;
+};
+
+export async function recordPurchase(customerId: string, shopId: string, chainData: PurchaseChainData = {}) {
   const state = await readState();
   const customer = state.customers.find((item) => item.id === customerId);
   const shop = state.shops.find((item) => item.id === shopId);
@@ -141,9 +154,12 @@ export async function recordPurchase(customerId: string, shopId: string) {
     exchangeRateJpyPerMnt: state.exchangeRateJpyPerMnt,
     quantity: 1,
     createdAt: new Date().toISOString(),
-    mode: "demo",
-    status: "recorded",
+    mode: chainData.mode || state.paymentMode,
+    status: chainData.status || (chainData.mode === "mantle-sepolia" ? "confirmed" : "recorded"),
     recipientAddress: shop.recipientAddress,
+    transactionHash: chainData.transactionHash,
+    blockNumber: chainData.blockNumber,
+    gasUsed: chainData.gasUsed,
   };
 
   const nextState: FestivalState = {

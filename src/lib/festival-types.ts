@@ -34,9 +34,12 @@ export type PaymentRecord = {
   gasUsed?: string;
 };
 
+export type PaymentMode = "demo" | "mantle-sepolia";
+
 export type FestivalState = {
   festivalName: string;
   exchangeRateJpyPerMnt: number;
+  paymentMode: PaymentMode;
   shops: Shop[];
   customers: Customer[];
   payments: PaymentRecord[];

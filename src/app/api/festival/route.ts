@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ensureCustomer, readState, recordPurchase, resetFestivalActivity, updateSettings } from "@/lib/festival-store";
-import type { Shop } from "@/lib/festival-types";
+import type { PaymentMode, PaymentRecord, Shop } from "@/lib/festival-types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,11 +10,17 @@ type FestivalAction =
       action: "purchase";
       customerId: string;
       shopId: string;
+      mode?: PaymentMode;
+      status?: PaymentRecord["status"];
+      transactionHash?: string;
+      blockNumber?: number;
+      gasUsed?: string;
     }
   | {
       action: "settings";
       festivalName: string;
       exchangeRateJpyPerMnt: number;
+      paymentMode: PaymentMode;
       shops: Shop[];
     }
   | {
@@ -36,7 +42,13 @@ export async function POST(request: NextRequest) {
   const body = (await request.json()) as FestivalAction;
 
   if (body.action === "purchase") {
-    const result = await recordPurchase(body.customerId, body.shopId);
+    const result = await recordPurchase(body.customerId, body.shopId, {
+      mode: body.mode,
+      status: body.status,
+      transactionHash: body.transactionHash,
+      blockNumber: body.blockNumber,
+      gasUsed: body.gasUsed,
+    });
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   }
 
@@ -44,6 +56,7 @@ export async function POST(request: NextRequest) {
     const state = await updateSettings({
       festivalName: body.festivalName,
       exchangeRateJpyPerMnt: body.exchangeRateJpyPerMnt,
+      paymentMode: body.paymentMode,
       shops: body.shops,
     });
     return NextResponse.json({ ok: true, state });
