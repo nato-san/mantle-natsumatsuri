@@ -189,6 +189,8 @@ export default function Home() {
   const [confirmShopId, setConfirmShopId] = useState<string | null>(null);
   const [successItemName, setSuccessItemName] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("共有データをよみこみ中");
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [walletAvailable, setWalletAvailable] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -230,6 +232,27 @@ export default function Home() {
       window.clearInterval(timer);
     };
   }, [screen]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const provider = window.ethereum;
+      setWalletAvailable(Boolean(provider));
+
+      if (!provider) {
+        return;
+      }
+
+      provider
+        .request({ method: "eth_accounts" })
+        .then((accounts) => {
+          const [account] = accounts as string[];
+          setWalletAddress(account || null);
+        })
+        .catch(() => setWalletAddress(null));
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const effectiveSelectedShopId = festival.shops.some((shop) => shop.id === selectedShopId)
     ? selectedShopId
@@ -329,6 +352,28 @@ export default function Home() {
     }
   }
 
+  async function connectWallet() {
+    const provider = window.ethereum;
+
+    if (!provider) {
+      setWalletAvailable(false);
+      setStatusMessage("MetaMaskなどのおさいふアプリで開いてね");
+      return;
+    }
+
+    setWalletAvailable(true);
+    setStatusMessage("MNTのおさいふをつないでいます");
+
+    try {
+      await ensureMantleSepolia(provider);
+      const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+      setWalletAddress(accounts[0] || null);
+      setStatusMessage(accounts[0] ? "おさいふがつながりました" : "おさいふをつなげませんでした");
+    } catch {
+      setStatusMessage("おさいふをつなげませんでした");
+    }
+  }
+
   async function saveSettings(
     nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "paymentMode" | "shops">,
   ) {
@@ -410,6 +455,9 @@ export default function Home() {
             shops={festival.shops}
             successItemName={successItemName}
             statusMessage={statusMessage}
+            walletAddress={walletAddress}
+            walletAvailable={walletAvailable}
+            onConnectWallet={() => void connectWallet()}
             onCloseSuccess={() => setSuccessItemName(null)}
             onPickShop={(shopId) => setConfirmShopId(shopId)}
           />
@@ -517,6 +565,9 @@ function CustomerScreen({
   shops,
   successItemName,
   statusMessage,
+  walletAddress,
+  walletAvailable,
+  onConnectWallet,
   onPickShop,
   onCloseSuccess,
 }: {
@@ -526,6 +577,9 @@ function CustomerScreen({
   shops: Shop[];
   successItemName: string | null;
   statusMessage: string;
+  walletAddress: string | null;
+  walletAvailable: boolean;
+  onConnectWallet: () => void;
   onPickShop: (shopId: string) => void;
   onCloseSuccess: () => void;
 }) {
@@ -549,8 +603,19 @@ function CustomerScreen({
         <div className="rounded-[28px] bg-[#d8f8c7] p-5 text-center shadow-sm">
           <p className="text-base font-black text-[#32611f]">{customer.name}</p>
           <p className="text-xl font-black text-[#32611f]">MNTのおさいふ</p>
-          <p className="mt-2 text-2xl font-black">買うときに ひらくよ</p>
+          {walletAddress ? (
+            <p className="mt-2 font-mono text-2xl font-black">{shortHash(walletAddress)}</p>
+          ) : (
+            <button className="touch-button buy-button mt-3 w-full text-xl" type="button" onClick={onConnectWallet}>
+              おさいふをつなぐ
+            </button>
+          )}
           <p className="mt-2 text-sm font-bold text-[#47713a]">のこりMNTは おさいふで見ます</p>
+          {!walletAvailable ? (
+            <p className="mt-2 rounded-[14px] bg-white px-3 py-2 text-sm font-black text-[#7b4b21]">
+              MetaMaskなどのおさいふアプリで開いてね
+            </p>
+          ) : null}
         </div>
       )}
 
