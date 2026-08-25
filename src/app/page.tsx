@@ -200,17 +200,21 @@ export default function Home() {
         if (!isActive) {
           return;
         }
-        setFestival({
-          festivalName: nextFestival.festivalName,
-          exchangeRateJpyPerMnt: nextFestival.exchangeRateJpyPerMnt,
-          paymentMode: nextFestival.paymentMode,
-          shops: nextFestival.shops,
-          customers: nextFestival.customers,
-          payments: nextFestival.payments,
-        });
+        if (screen !== "settings") {
+          setFestival({
+            festivalName: nextFestival.festivalName,
+            exchangeRateJpyPerMnt: nextFestival.exchangeRateJpyPerMnt,
+            paymentMode: nextFestival.paymentMode,
+            shops: nextFestival.shops,
+            customers: nextFestival.customers,
+            payments: nextFestival.payments,
+          });
+        }
         setCurrentCustomer(nextFestival.currentCustomer);
         setSelectedShopId((current) => nextFestival.shops.find((shop) => shop.id === current)?.id || nextFestival.shops[0]?.id || "");
-        setStatusMessage("");
+        if (screen !== "settings") {
+          setStatusMessage("");
+        }
       } catch {
         if (isActive) {
           setStatusMessage("共有データにつながりません");
@@ -225,7 +229,7 @@ export default function Home() {
       isActive = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [screen]);
 
   const effectiveSelectedShopId = festival.shops.some((shop) => shop.id === selectedShopId)
     ? selectedShopId
@@ -341,79 +345,11 @@ export default function Home() {
         }),
       });
       setStatusMessage("");
+      return true;
     } catch {
       setStatusMessage("設定を保存できません");
+      return false;
     }
-  }
-
-  function updateFestivalName(festivalName: string) {
-    void saveSettings({
-      festivalName,
-      exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
-      paymentMode: festival.paymentMode,
-      shops: festival.shops,
-    });
-  }
-
-  function updateExchangeRate(exchangeRateJpyPerMnt: number) {
-    void saveSettings({
-      festivalName: festival.festivalName,
-      exchangeRateJpyPerMnt,
-      paymentMode: festival.paymentMode,
-      shops: festival.shops,
-    });
-  }
-
-  function updatePaymentMode(paymentMode: PaymentMode) {
-    void saveSettings({
-      festivalName: festival.festivalName,
-      exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
-      paymentMode,
-      shops: festival.shops,
-    });
-  }
-
-  function updateShop(shopId: string, nextShop: Partial<Shop>) {
-    const shops = festival.shops.map((shop) => (shop.id === shopId ? { ...shop, ...nextShop } : shop));
-    void saveSettings({
-      festivalName: festival.festivalName,
-      exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
-      paymentMode: festival.paymentMode,
-      shops,
-    });
-  }
-
-  function addShop() {
-    const shop: Shop = {
-      id: createId("shop"),
-      emoji: "🏮",
-      name: "あたらしいおみせ",
-      description: "1こ",
-      priceJpy: festival.exchangeRateJpyPerMnt,
-      actionLabel: "かう！",
-    };
-
-    void saveSettings({
-      festivalName: festival.festivalName,
-      exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
-      paymentMode: festival.paymentMode,
-      shops: [...festival.shops, shop],
-    });
-    setSelectedShopId(shop.id);
-  }
-
-  function deleteShop(shopId: string) {
-    if (festival.shops.length <= 1) {
-      return;
-    }
-
-    const shops = festival.shops.filter((shop) => shop.id !== shopId);
-    void saveSettings({
-      festivalName: festival.festivalName,
-      exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
-      paymentMode: festival.paymentMode,
-      shops,
-    });
   }
 
   async function resetDemo() {
@@ -495,12 +431,12 @@ export default function Home() {
           <SettingsScreen
             festival={festival}
             statusMessage={statusMessage}
-            onFestivalNameChange={updateFestivalName}
-            onExchangeRateChange={updateExchangeRate}
-            onPaymentModeChange={updatePaymentMode}
-            onShopChange={updateShop}
-            onAddShop={addShop}
-            onDeleteShop={deleteShop}
+            onSaveSettings={async (nextSettings) => {
+              const didSave = await saveSettings(nextSettings);
+              if (didSave) {
+                setScreen("merchant");
+              }
+            }}
             onResetDemo={() => void resetDemo()}
           />
         ) : null}
@@ -786,32 +722,70 @@ function Metric({ label, value }: { label: string; value: string }) {
 function SettingsScreen({
   festival,
   statusMessage,
-  onFestivalNameChange,
-  onExchangeRateChange,
-  onPaymentModeChange,
-  onShopChange,
-  onAddShop,
-  onDeleteShop,
+  onSaveSettings,
   onResetDemo,
 }: {
   festival: FestivalState;
   statusMessage: string;
-  onFestivalNameChange: (name: string) => void;
-  onExchangeRateChange: (exchangeRateJpyPerMnt: number) => void;
-  onPaymentModeChange: (paymentMode: PaymentMode) => void;
-  onShopChange: (shopId: string, nextShop: Partial<Shop>) => void;
-  onAddShop: () => void;
-  onDeleteShop: (shopId: string) => void;
+  onSaveSettings: (
+    nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "paymentMode" | "shops">,
+  ) => Promise<void>;
   onResetDemo: () => void;
 }) {
+  const [draft, setDraft] = useState(() => ({
+    festivalName: festival.festivalName,
+    exchangeRateJpyPerMnt: festival.exchangeRateJpyPerMnt,
+    paymentMode: festival.paymentMode,
+    shops: festival.shops,
+  }));
+
   function handleExchangeRate(event: FormEvent<HTMLInputElement>) {
     const value = Number(event.currentTarget.value);
-    onExchangeRateChange(Number.isFinite(value) ? Math.max(1, value) : festival.exchangeRateJpyPerMnt);
+    setDraft((current) => ({
+      ...current,
+      exchangeRateJpyPerMnt: Number.isFinite(value) ? Math.max(1, value) : current.exchangeRateJpyPerMnt,
+    }));
   }
 
   function handlePrice(event: FormEvent<HTMLInputElement>, shop: Shop) {
     const value = Number(event.currentTarget.value);
-    onShopChange(shop.id, { priceJpy: Number.isFinite(value) ? Math.max(0, value) : shop.priceJpy });
+    updateDraftShop(shop.id, { priceJpy: Number.isFinite(value) ? Math.max(0, value) : shop.priceJpy });
+  }
+
+  function updateDraftShop(shopId: string, nextShop: Partial<Shop>) {
+    setDraft((current) => ({
+      ...current,
+      shops: current.shops.map((shop) => (shop.id === shopId ? { ...shop, ...nextShop } : shop)),
+    }));
+  }
+
+  function addDraftShop() {
+    const shop: Shop = {
+      id: createId("shop"),
+      emoji: "🏮",
+      name: "あたらしいおみせ",
+      description: "1こ",
+      priceJpy: draft.exchangeRateJpyPerMnt,
+      actionLabel: "かう！",
+    };
+
+    setDraft((current) => ({
+      ...current,
+      shops: [...current.shops, shop],
+    }));
+  }
+
+  function deleteDraftShop(shopId: string) {
+    setDraft((current) => {
+      if (current.shops.length <= 1) {
+        return current;
+      }
+
+      return {
+        ...current,
+        shops: current.shops.filter((shop) => shop.id !== shopId),
+      };
+    });
   }
 
   return (
@@ -829,8 +803,8 @@ function SettingsScreen({
         <input
           id="festival-name"
           className="text-field mt-2"
-          value={festival.festivalName}
-          onChange={(event) => onFestivalNameChange(event.target.value)}
+          value={draft.festivalName}
+          onChange={(event) => setDraft((current) => ({ ...current, festivalName: event.target.value }))}
         />
       </div>
 
@@ -845,7 +819,7 @@ function SettingsScreen({
             min="1"
             step="1"
             type="number"
-            value={festival.exchangeRateJpyPerMnt}
+            value={draft.exchangeRateJpyPerMnt}
             onInput={handleExchangeRate}
           />
           <p className="text-lg font-black">円</p>
@@ -856,7 +830,7 @@ function SettingsScreen({
               key={rate}
               className="touch-button small-button bg-[#ffdf63]"
               type="button"
-              onClick={() => onExchangeRateChange(rate)}
+              onClick={() => setDraft((current) => ({ ...current, exchangeRateJpyPerMnt: rate }))}
             >
               {rate}円
             </button>
@@ -869,19 +843,19 @@ function SettingsScreen({
         <div className="mt-2 grid grid-cols-2 gap-2">
           <button
             className={`touch-button small-button ${
-              festival.paymentMode === "demo" ? "bg-[#ffdf63]" : "bg-[#f7efe2]"
+              draft.paymentMode === "demo" ? "bg-[#ffdf63]" : "bg-[#f7efe2]"
             }`}
             type="button"
-            onClick={() => onPaymentModeChange("demo")}
+            onClick={() => setDraft((current) => ({ ...current, paymentMode: "demo" }))}
           >
             れんしゅう
           </button>
           <button
             className={`touch-button small-button ${
-              festival.paymentMode === "mantle-sepolia" ? "bg-[#7bd7c6]" : "bg-[#f7efe2]"
+              draft.paymentMode === "mantle-sepolia" ? "bg-[#7bd7c6]" : "bg-[#f7efe2]"
             }`}
             type="button"
-            onClick={() => onPaymentModeChange("mantle-sepolia")}
+            onClick={() => setDraft((current) => ({ ...current, paymentMode: "mantle-sepolia" }))}
           >
             test MNT
           </button>
@@ -893,13 +867,13 @@ function SettingsScreen({
 
       <div className="mt-4 flex items-center justify-between gap-3">
         <h2 className="text-2xl font-black">お店</h2>
-        <button className="touch-button small-button bg-[#ffdf63]" type="button" onClick={onAddShop}>
+        <button className="touch-button small-button bg-[#ffdf63]" type="button" onClick={addDraftShop}>
           ＋ お店を追加
         </button>
       </div>
 
       <div className="mt-3 grid gap-4">
-        {festival.shops.map((shop) => (
+        {draft.shops.map((shop) => (
           <article key={shop.id} className="rounded-lg bg-white p-4 shadow-sm">
             <div className="grid grid-cols-[4.5rem_1fr] gap-3">
               <div>
@@ -911,7 +885,7 @@ function SettingsScreen({
                   className="text-field mt-2 text-center text-3xl"
                   maxLength={4}
                   value={shop.emoji}
-                  onChange={(event) => onShopChange(shop.id, { emoji: event.target.value })}
+                  onChange={(event) => updateDraftShop(shop.id, { emoji: event.target.value })}
                 />
               </div>
               <div>
@@ -922,7 +896,7 @@ function SettingsScreen({
                   id={`${shop.id}-name`}
                   className="text-field mt-2"
                   value={shop.name}
-                  onChange={(event) => onShopChange(shop.id, { name: event.target.value })}
+                  onChange={(event) => updateDraftShop(shop.id, { name: event.target.value })}
                 />
               </div>
             </div>
@@ -936,7 +910,7 @@ function SettingsScreen({
                   id={`${shop.id}-description`}
                   className="text-field mt-2"
                   value={shop.description}
-                  onChange={(event) => onShopChange(shop.id, { description: event.target.value })}
+                  onChange={(event) => updateDraftShop(shop.id, { description: event.target.value })}
                 />
               </div>
               <div>
@@ -953,7 +927,7 @@ function SettingsScreen({
                   onInput={(event) => handlePrice(event, shop)}
                 />
                 <p className="mt-2 text-sm font-black text-[#7b4b21]">
-                  今は {formatMnt(calculateMntPrice(shop.priceJpy, festival.exchangeRateJpyPerMnt))} MNT
+                  今は {formatMnt(calculateMntPrice(shop.priceJpy, draft.exchangeRateJpyPerMnt))} MNT
                 </p>
               </div>
               <div>
@@ -964,7 +938,7 @@ function SettingsScreen({
                   id={`${shop.id}-action`}
                   className="text-field mt-2"
                   value={shop.actionLabel}
-                  onChange={(event) => onShopChange(shop.id, { actionLabel: event.target.value })}
+                  onChange={(event) => updateDraftShop(shop.id, { actionLabel: event.target.value })}
                 />
               </div>
             </div>
@@ -978,9 +952,9 @@ function SettingsScreen({
                 className="text-field mt-2 font-mono text-sm"
                 placeholder="0x..."
                 value={shop.recipientAddress || ""}
-                onChange={(event) => onShopChange(shop.id, { recipientAddress: event.target.value.trim() })}
+                onChange={(event) => updateDraftShop(shop.id, { recipientAddress: event.target.value.trim() })}
               />
-              {festival.paymentMode === "mantle-sepolia" && !isAddressLike(shop.recipientAddress) ? (
+              {draft.paymentMode === "mantle-sepolia" && !isAddressLike(shop.recipientAddress) ? (
                 <p className="mt-2 text-sm font-black text-[#b62e22]">test MNTで使うには受け取り先が必要です</p>
               ) : null}
             </div>
@@ -989,8 +963,8 @@ function SettingsScreen({
               <button
                 className="rounded-md border border-[#d84630] px-4 py-3 text-sm font-black text-[#b62e22] disabled:cursor-not-allowed disabled:opacity-40"
                 type="button"
-                disabled={festival.shops.length <= 1}
-                onClick={() => onDeleteShop(shop.id)}
+                disabled={draft.shops.length <= 1}
+                onClick={() => deleteDraftShop(shop.id)}
               >
                 削除
               </button>
@@ -1000,10 +974,23 @@ function SettingsScreen({
       </div>
 
       <section className="mt-5 rounded-lg border border-[#ead7aa] bg-[#fff0c2] p-4">
-        <h2 className="text-lg font-black">STEP 2 の準備</h2>
+        <h2 className="text-lg font-black">保存</h2>
         <p className="mt-2 text-sm font-bold leading-6 text-[#6b4b2f]">
-          いまは Mantle Sepolia / Demo です。秘密鍵やシードフレーズは保存しません。
-          次の実決済では recipientAddress をお店ごとに追加し、transactionHash / blockNumber / gasUsed を決済履歴へ保存できる形です。
+          入力した内容は、下のボタンを押すまでお店側には反映されません。
+        </p>
+        <button
+          className="touch-button buy-button mt-4 w-full text-xl"
+          type="button"
+          onClick={() => void onSaveSettings(draft)}
+        >
+          保存してお店にもどる
+        </button>
+      </section>
+
+      <section className="mt-5 rounded-lg border border-[#ead7aa] bg-[#fff0c2] p-4">
+        <h2 className="text-lg font-black">当日のリセット</h2>
+        <p className="mt-2 text-sm font-bold leading-6 text-[#6b4b2f]">
+          お店や相場の設定は残したまま、お客さんの残高と決済履歴だけを戻します。
         </p>
         <button className="touch-button cancel-button mt-4" type="button" onClick={onResetDemo}>
           残高と履歴をリセット
