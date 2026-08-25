@@ -93,6 +93,10 @@ data/festival-state.json
 
 test MNTモードでは、子ども画面の `のこり MNT` は表示しません。実際の残高はウォレット側で確認するためです。
 
+ウォレット接続には Reown AppKit / WalletConnect を使います。特定ウォレットをただ開くのではなく、ウォレット接続後に購入ボタンから送金し、購入時はウォレット側で送金を承認します。
+
+スマホでは同じ端末内のウォレットアプリへ遷移する接続を想定しています。安定して確認する場合は、ローカルIPアドレスよりもHTTPSで公開したURLを使うのがおすすめです。
+
 Mantle Sepolia の接続情報:
 
 - Chain ID: `5003`
@@ -104,11 +108,22 @@ Mantle Sepolia の接続情報:
 
 購入が成功すると、決済履歴に以下を保存します。
 
+- `payerAddress`
+- `recipientAddress`
 - `transactionHash`
 - `blockNumber`
 - `gasUsed`
+- `status`
 
-秘密鍵やシードフレーズは、コードやGitHubに入れません。署名はお客さん端末のウォレット側で行います。
+注文状態は `pending_wallet` → `submitted` → `confirmed` → `completed` で進みます。ウォレット拒否は `rejected`、チェーン検証失敗は `failed` になります。
+
+オンチェーンの `confirmed` はクライアントの自己申告ではなく、サーバー側でTx receipt、from、to、valueをMantle Sepoliaから取得して検証してから記録します。
+
+お店側には、購入した商品、MNT金額、支払い元ウォレット、Mantle Sepolia Explorerへのリンクが表示されます。
+
+お店側で `商品をわたした！ OK` を押すと `completed` になり、お客さん側の受取画面も `おかいもの完了！` に変わります。
+
+秘密鍵やシードフレーズは、コードやGitHubに入れません。署名と送金承認はお客さん端末のウォレット側で行います。
 
 うまくいかない時は、お店側設定から支払いモードを `れんしゅう` に戻すと、オンチェーンなしで遊べます。
 
@@ -120,6 +135,8 @@ Mantle Sepolia の接続情報:
 - App Router
 - ローカル共有API
 - viem
+- wagmi
+- Reown AppKit / WalletConnect
 - Mantle Sepolia Testnet
 
 ## 確認コマンド

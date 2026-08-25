@@ -1,5 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { createPublicClient, formatEther, getAddress, http, parseEther, type Hash } from "viem";
+import { mantleSepolia } from "./mantle-sepolia";
 import type { Customer, FestivalState, PaymentMode, PaymentRecord, Shop } from "./festival-types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -51,6 +53,24 @@ export function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function isAddressLike(value?: string) {
+  return /^0x[a-fA-F0-9]{40}$/.test(value || "");
+}
+
+function toMntAmount(value: number) {
+  return value.toFixed(8).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function normalizePayment(payment: PaymentRecord): PaymentRecord {
+  const status = (payment as { status: string }).status;
+
+  if (status === "pending") {
+    return { ...payment, status: payment.transactionHash ? "submitted" : "pending_wallet" };
+  }
+
+  return payment;
+}
+
 export function createCustomer(customerId: string, count: number): Customer {
   return {
     id: customerId,
@@ -79,7 +99,7 @@ export async function readState(): Promise<FestivalState> {
       paymentMode: parsed.paymentMode === "mantle-sepolia" ? "mantle-sepolia" : "demo",
       shops: Array.isArray(parsed.shops) && parsed.shops.length > 0 ? parsed.shops : defaultShops,
       customers: Array.isArray(parsed.customers) ? parsed.customers : [],
-      payments: Array.isArray(parsed.payments) ? parsed.payments : [],
+      payments: Array.isArray(parsed.payments) ? parsed.payments.map(normalizePayment) : [],
     };
   } catch {
     await saveState(initialState);
@@ -127,6 +147,7 @@ type PurchaseChainData = {
   transactionHash?: string;
   blockNumber?: number;
   gasUsed?: string;
+  payerAddress?: string;
 };
 
 export async function recordPurchase(customerId: string, shopId: string, chainData: PurchaseChainData = {}) {
@@ -139,7 +160,7 @@ export async function recordPurchase(customerId: string, shopId: string, chainDa
   }
 
   const priceMnt = calculateMntPrice(shop.priceJpy, state.exchangeRateJpyPerMnt);
-  if (customer.balanceMnt < priceMnt) {
+  if (chainData.mode !== "mantle-sepolia" && customer.balanceMnt < priceMnt) {
     return { ok: false as const, reason: "not_enough_mnt", state };
   }
 
@@ -157,6 +178,7 @@ export async function recordPurchase(customerId: string, shopId: string, chainDa
     mode: chainData.mode || state.paymentMode,
     status: chainData.status || (chainData.mode === "mantle-sepolia" ? "confirmed" : "recorded"),
     recipientAddress: shop.recipientAddress,
+    payerAddress: chainData.payerAddress,
     transactionHash: chainData.transactionHash,
     blockNumber: chainData.blockNumber,
     gasUsed: chainData.gasUsed,
@@ -164,14 +186,193 @@ export async function recordPurchase(customerId: string, shopId: string, chainDa
 
   const nextState: FestivalState = {
     ...state,
-    customers: state.customers.map((item) =>
-      item.id === customer.id ? { ...item, balanceMnt: Math.max(0, item.balanceMnt - priceMnt) } : item,
-    ),
+    customers:
+      chainData.mode === "mantle-sepolia"
+        ? state.customers
+        : state.customers.map((item) =>
+            item.id === customer.id ? { ...item, balanceMnt: Math.max(0, item.balanceMnt - priceMnt) } : item,
+          ),
     payments: [payment, ...state.payments],
   };
   await saveState(nextState);
 
   return { ok: true as const, payment, state: nextState };
+}
+
+export async function createOnchainOrder(customerId: string, shopId: string, payerAddress: string) {
+  const state = await readState();
+  const customer = state.customers.find((item) => item.id === customerId);
+  const shop = state.shops.find((item) => item.id === shopId);
+
+  if (!customer || !shop) {
+    return { ok: false as const, reason: "not_found", state };
+  }
+
+  if (!isAddressLike(shop.recipientAddress)) {
+    return { ok: false as const, reason: "recipient_missing", state };
+  }
+
+  if (!isAddressLike(payerAddress)) {
+    return { ok: false as const, reason: "payer_missing", state };
+  }
+
+  const priceMnt = calculateMntPrice(shop.priceJpy, state.exchangeRateJpyPerMnt);
+  const now = new Date().toISOString();
+  const payment: PaymentRecord = {
+    id: createId("order"),
+    customerId: customer.id,
+    customerName: customer.name,
+    shopId: shop.id,
+    itemName: shop.name,
+    priceJpy: shop.priceJpy,
+    priceMnt,
+    exchangeRateJpyPerMnt: state.exchangeRateJpyPerMnt,
+    quantity: 1,
+    createdAt: now,
+    mode: "mantle-sepolia",
+    status: "pending_wallet",
+    recipientAddress: shop.recipientAddress,
+    payerAddress,
+  };
+
+  const nextState = {
+    ...state,
+    payments: [payment, ...state.payments],
+  };
+  await saveState(nextState);
+
+  return { ok: true as const, payment, state: nextState };
+}
+
+export async function markOrderSubmitted(orderId: string, transactionHash: string) {
+  const state = await readState();
+  const payment = state.payments.find((item) => item.id === orderId);
+
+  if (!payment || payment.mode !== "mantle-sepolia") {
+    return { ok: false as const, reason: "not_found", state };
+  }
+
+  const now = new Date().toISOString();
+  const nextState: FestivalState = {
+    ...state,
+    payments: state.payments.map((item) =>
+      item.id === orderId
+        ? {
+            ...item,
+            status: "submitted",
+            transactionHash,
+            submittedAt: now,
+          }
+        : item,
+    ),
+  };
+  await saveState(nextState);
+
+  return { ok: true as const, payment: nextState.payments.find((item) => item.id === orderId), state: nextState };
+}
+
+export async function rejectOrder(orderId: string, errorMessage?: string) {
+  const state = await readState();
+  const now = new Date().toISOString();
+  const nextState: FestivalState = {
+    ...state,
+    payments: state.payments.map((item) =>
+      item.id === orderId && item.status !== "confirmed" && item.status !== "completed"
+        ? {
+            ...item,
+            status: "rejected",
+            completedAt: now,
+            errorMessage,
+          }
+        : item,
+    ),
+  };
+  await saveState(nextState);
+
+  return { ok: true as const, state: nextState };
+}
+
+export async function verifyOnchainOrder(orderId: string, transactionHash: string) {
+  const state = await readState();
+  const payment = state.payments.find((item) => item.id === orderId);
+
+  if (!payment || payment.mode !== "mantle-sepolia") {
+    return { ok: false as const, reason: "not_found", state };
+  }
+
+  if (!payment.recipientAddress || !payment.payerAddress) {
+    return { ok: false as const, reason: "payment_details_missing", state };
+  }
+
+  const publicClient = createPublicClient({
+    chain: mantleSepolia,
+    transport: http(),
+  });
+  const [tx, receipt] = await Promise.all([
+    publicClient.getTransaction({ hash: transactionHash as Hash }),
+    publicClient.getTransactionReceipt({ hash: transactionHash as Hash }),
+  ]);
+  const expectedValue = parseEther(toMntAmount(payment.priceMnt));
+  const fromMatches = getAddress(tx.from) === getAddress(payment.payerAddress);
+  const toMatches = tx.to ? getAddress(tx.to) === getAddress(payment.recipientAddress) : false;
+  const valueMatches = tx.value >= expectedValue;
+  const confirmed = receipt.status === "success" && fromMatches && toMatches && valueMatches;
+  const now = new Date().toISOString();
+  const nextStatus: PaymentRecord["status"] = confirmed ? "confirmed" : "failed";
+  const nextState: FestivalState = {
+    ...state,
+    payments: state.payments.map((item) =>
+      item.id === orderId
+        ? {
+            ...item,
+            status: nextStatus,
+            transactionHash,
+            blockNumber: Number(receipt.blockNumber),
+            gasUsed: receipt.gasUsed.toString(),
+            confirmedAt: confirmed ? now : item.confirmedAt,
+            errorMessage: confirmed
+              ? undefined
+              : `Tx check failed: from=${fromMatches}, to=${toMatches}, value=${valueMatches}, receipt=${receipt.status}, value=${formatEther(tx.value)} MNT`,
+          }
+        : item,
+    ),
+  };
+  await saveState(nextState);
+
+  return { ok: confirmed, reason: confirmed ? undefined : "tx_verification_failed", state: nextState };
+}
+
+export async function completeOrder(orderId: string) {
+  const state = await readState();
+  const payment = state.payments.find((item) => item.id === orderId);
+
+  if (!payment) {
+    return { ok: false as const, reason: "not_found", state };
+  }
+
+  const canComplete =
+    payment.mode === "demo" || payment.status === "recorded" || payment.status === "confirmed" || payment.status === "completed";
+
+  if (!canComplete) {
+    return { ok: false as const, reason: "not_confirmed", state };
+  }
+
+  const now = new Date().toISOString();
+  const nextState: FestivalState = {
+    ...state,
+    payments: state.payments.map((item) =>
+      item.id === orderId
+        ? {
+            ...item,
+            status: "completed",
+            completedAt: item.completedAt || now,
+          }
+        : item,
+    ),
+  };
+  await saveState(nextState);
+
+  return { ok: true as const, state: nextState };
 }
 
 export async function resetFestivalActivity() {

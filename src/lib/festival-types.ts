@@ -27,11 +27,16 @@ export type PaymentRecord = {
   quantity: number;
   createdAt: string;
   mode: "demo" | "mantle-sepolia";
-  status: "recorded" | "pending" | "confirmed" | "failed";
+  status: "recorded" | "pending_wallet" | "submitted" | "confirmed" | "completed" | "failed" | "rejected";
   recipientAddress?: string;
+  payerAddress?: string;
   transactionHash?: string;
   blockNumber?: number;
   gasUsed?: string;
+  submittedAt?: string;
+  confirmedAt?: string;
+  completedAt?: string;
+  errorMessage?: string;
 };
 
 export type PaymentMode = "demo" | "mantle-sepolia";

@@ -1,15 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { createPublicClient, createWalletClient, custom, http, parseEther, type Address, type EIP1193Provider } from "viem";
-import type { Customer, FestivalResponse, FestivalState, PaymentMode, Shop, ShopStats } from "@/lib/festival-types";
-import { mantleSepolia, mantleSepoliaAddChainParameter } from "@/lib/mantle-sepolia";
-
-declare global {
-  interface Window {
-    ethereum?: EIP1193Provider;
-  }
-}
+import { formatEther, parseEther, type Address } from "viem";
+import { useAppKit } from "@reown/appkit/react";
+import { sendTransaction, switchChain } from "wagmi/actions";
+import { useAccount, useBalance } from "wagmi";
+import type { Customer, FestivalResponse, FestivalState, PaymentMode, PaymentRecord, Shop, ShopStats } from "@/lib/festival-types";
+import { MANTLE_SEPOLIA_EXPLORER_URL } from "@/lib/mantle-sepolia-config";
+import { wagmiAdapter } from "./providers";
 
 type Screen = "home" | "customer" | "merchant" | "settings";
 
@@ -106,24 +104,6 @@ function shortHash(value: string) {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
-function getMetaMaskDeepLink() {
-  if (typeof window === "undefined") {
-    return "https://metamask.app.link/";
-  }
-
-  const url = window.location.href.replace(/^https?:\/\//, "");
-  return `https://metamask.app.link/dapp/${url}`;
-}
-
-function getMetaMaskDirectLink() {
-  if (typeof window === "undefined") {
-    return "metamask://";
-  }
-
-  const url = window.location.href.replace(/^https?:\/\//, "");
-  return `metamask://dapp/${url}`;
-}
-
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("ja-JP", {
     hour: "2-digit",
@@ -135,36 +115,12 @@ function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-async function ensureMantleSepolia(provider: EIP1193Provider) {
-  const chainId = await provider.request({ method: "eth_chainId" });
-
-  if (chainId === mantleSepoliaAddChainParameter.chainId) {
-    return;
-  }
-
-  try {
-    await provider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: mantleSepoliaAddChainParameter.chainId }],
-    });
-  } catch (error) {
-    const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-
-    if (code !== 4902) {
-      throw error;
-    }
-
-    await provider.request({
-      method: "wallet_addEthereumChain",
-      params: [mantleSepoliaAddChainParameter],
-    });
-  }
-}
-
-async function sendMantleSepoliaPayment(shop: Shop, priceMnt: number) {
-  const provider = window.ethereum;
-
-  if (!provider) {
+async function sendMantleSepoliaPayment(
+  shop: Shop,
+  priceMnt: number,
+  connectedAddress: string | null,
+) {
+  if (!connectedAddress) {
     throw new Error("wallet_missing");
   }
 
@@ -172,43 +128,36 @@ async function sendMantleSepoliaPayment(shop: Shop, priceMnt: number) {
     throw new Error("recipient_missing");
   }
 
-  const walletClient = createWalletClient({
-    chain: mantleSepolia,
-    transport: custom(provider),
+  await switchChain(wagmiAdapter.wagmiConfig, {
+    chainId: 5003,
   });
-  const [account] = await walletClient.requestAddresses();
-  await ensureMantleSepolia(provider);
-  const hash = await walletClient.sendTransaction({
-    account,
+
+  const hash = await sendTransaction(wagmiAdapter.wagmiConfig, {
     to: shop.recipientAddress as Address,
     value: parseEther(toMntAmount(priceMnt)),
+    chainId: 5003,
   });
 
-  const publicClient = createPublicClient({
-    chain: mantleSepolia,
-    transport: http(),
-  });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-
-  return {
-    transactionHash: hash,
-    blockNumber: Number(receipt.blockNumber),
-    gasUsed: receipt.gasUsed.toString(),
-    status: receipt.status === "success" ? ("confirmed" as const) : ("failed" as const),
-  };
+  return hash;
 }
 
 export default function Home() {
+  const { open } = useAppKit();
+  const { address: walletAddress, isConnected } = useAccount();
+  const { data: walletBalance } = useBalance({
+    address: walletAddress,
+    chainId: 5003,
+    query: { enabled: Boolean(walletAddress) },
+  });
   const [screen, setScreen] = useState<Screen>("home");
   const [festival, setFestival] = useState<FestivalState>(initialState);
   const [currentCustomer, setCurrentCustomer] = useState<Customer>(fallbackCustomer);
   const [selectedShopId, setSelectedShopId] = useState(fallbackShops[0].id);
   const [confirmShopId, setConfirmShopId] = useState<string | null>(null);
   const [successItemName, setSuccessItemName] = useState<string | null>(null);
+  const [successPaymentId, setSuccessPaymentId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("共有データをよみこみ中");
   const [walletMessage, setWalletMessage] = useState("");
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [walletAvailable, setWalletAvailable] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -251,42 +200,28 @@ export default function Home() {
     };
   }, [screen]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      const provider = window.ethereum;
-      setWalletAvailable(Boolean(provider));
-
-      if (!provider) {
-        return;
-      }
-
-      provider
-        .request({ method: "eth_accounts" })
-        .then((accounts) => {
-          const [account] = accounts as string[];
-          setWalletAddress(account || null);
-        })
-        .catch(() => setWalletAddress(null));
-    }, 0);
-
-    return () => window.clearTimeout(timer);
-  }, []);
-
   const effectiveSelectedShopId = festival.shops.some((shop) => shop.id === selectedShopId)
     ? selectedShopId
     : festival.shops[0]?.id || "";
   const confirmShop = festival.shops.find((shop) => shop.id === confirmShopId) || null;
+  const successPayment = successPaymentId ? festival.payments.find((payment) => payment.id === successPaymentId) || null : null;
 
   const shopStats = useMemo(() => {
     return festival.shops.map((shop) => {
       const records = festival.payments.filter((payment) => payment.shopId === shop.id);
-      const sales = records.reduce((sum, payment) => sum + payment.priceMnt * payment.quantity, 0);
+      const confirmedRecords = records.filter(
+        (payment) =>
+          payment.mode === "demo" ||
+          payment.status === "confirmed" ||
+          payment.status === "completed",
+      );
+      const sales = confirmedRecords.reduce((sum, payment) => sum + payment.priceMnt * payment.quantity, 0);
 
       return {
         shop,
         records,
         sales,
-        count: records.length,
+        count: confirmedRecords.length,
       };
     });
   }, [festival.payments, festival.shops]);
@@ -317,20 +252,83 @@ export default function Home() {
 
     setConfirmShopId(null);
     setStatusMessage(festival.paymentMode === "mantle-sepolia" ? "MNTのおさいふを開いています" : "おみせに送っています");
+    let pendingOrderId: string | null = null;
 
     try {
-      const chainData =
-        festival.paymentMode === "mantle-sepolia"
-          ? await sendMantleSepoliaPayment(shop, priceMnt)
-          : {
-              status: "recorded" as const,
-            };
+      if (festival.paymentMode === "mantle-sepolia") {
+        if (!walletAddress || !isConnected) {
+          setStatusMessage("先にMNTのおさいふをつないでね");
+          await open({ view: "Connect" });
+          return;
+        }
 
-      if (chainData.status === "failed") {
-        setStatusMessage("MNTを送れませんでした");
+        setStatusMessage("おさいふで確認してね");
+        const orderResponse = await fetch("/api/festival", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "create_onchain_order",
+            customerId: currentCustomer.id,
+            shopId: shop.id,
+            payerAddress: walletAddress,
+          }),
+        });
+
+        if (!orderResponse.ok) {
+          throw new Error("recipient_missing");
+        }
+
+        const orderResult = (await orderResponse.json()) as { payment: PaymentRecord };
+        pendingOrderId = orderResult.payment.id;
+        const transactionHash = await sendMantleSepoliaPayment(shop, priceMnt, walletAddress);
+
+        setStatusMessage("送金を確認しています");
+        await fetch("/api/festival", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "submit_onchain_order",
+            orderId: orderResult.payment.id,
+            transactionHash,
+          }),
+        });
+
+        const [{ createPublicClient, http }, { mantleSepolia }] = await Promise.all([
+          import("viem"),
+          import("@/lib/mantle-sepolia"),
+        ]);
+        const publicClient = createPublicClient({
+          chain: mantleSepolia,
+          transport: http(),
+        });
+        await publicClient.waitForTransactionReceipt({ hash: transactionHash });
+
+        const verifyResponse = await fetch("/api/festival", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "verify_onchain_order",
+            orderId: orderResult.payment.id,
+            transactionHash,
+          }),
+        });
+
+        if (!verifyResponse.ok) {
+          setStatusMessage("支払いを確認できませんでした");
+          await refreshFestival();
+          return;
+        }
+
+        setSuccessPaymentId(orderResult.payment.id);
+        setSuccessItemName(shop.name);
+        setStatusMessage("");
         await refreshFestival();
         return;
       }
+
+      const chainData = {
+        status: "recorded" as const,
+      };
 
       setStatusMessage("おみせに記録しています");
       const response = await fetch("/api/festival", {
@@ -342,9 +340,6 @@ export default function Home() {
           shopId: shop.id,
           mode: festival.paymentMode,
           status: chainData.status,
-          transactionHash: "transactionHash" in chainData ? chainData.transactionHash : undefined,
-          blockNumber: "blockNumber" in chainData ? chainData.blockNumber : undefined,
-          gasUsed: "gasUsed" in chainData ? chainData.gasUsed : undefined,
         }),
       });
 
@@ -355,9 +350,22 @@ export default function Home() {
       }
 
       setSuccessItemName(shop.name);
+      const result = (await response.clone().json().catch(() => null)) as { payment?: PaymentRecord } | null;
+      setSuccessPaymentId(result?.payment?.id || null);
       setStatusMessage("");
       await refreshFestival();
     } catch (error) {
+      if (festival.paymentMode === "mantle-sepolia" && pendingOrderId) {
+        await fetch("/api/festival", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "reject_onchain_order",
+            orderId: pendingOrderId,
+            errorMessage: error instanceof Error ? error.message : "wallet rejected",
+          }),
+        }).catch(() => undefined);
+      }
       if (error instanceof Error && error.message === "wallet_missing") {
         setStatusMessage("MNTのおさいふが見つかりません");
         return;
@@ -371,24 +379,34 @@ export default function Home() {
   }
 
   async function connectWallet() {
-    const provider = window.ethereum;
-
-    if (!provider) {
-      setWalletAvailable(false);
-      setWalletMessage("このブラウザではおさいふが見つかりません");
-      return;
-    }
-
-    setWalletAvailable(true);
     setWalletMessage("MNTのおさいふをつないでいます");
 
     try {
-      const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
-      await ensureMantleSepolia(provider);
-      setWalletAddress(accounts[0] || null);
-      setWalletMessage(accounts[0] ? "おさいふがつながりました" : "おさいふをつなげませんでした");
+      await open({ view: "Connect" });
+      setWalletMessage("");
     } catch {
       setWalletMessage("おさいふをつなげませんでした");
+    }
+  }
+
+  async function completeHandOver(orderId: string) {
+    setStatusMessage("おわたしを記録中");
+    try {
+      const response = await fetch("/api/festival", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "complete_order", orderId }),
+      });
+
+      if (!response.ok) {
+        setStatusMessage("まだ支払い確認前です");
+        return;
+      }
+
+      setStatusMessage("");
+      await refreshFestival();
+    } catch {
+      setStatusMessage("記録できませんでした");
     }
   }
 
@@ -472,12 +490,16 @@ export default function Home() {
             paymentMode={festival.paymentMode}
             shops={festival.shops}
             successItemName={successItemName}
+            successPayment={successPayment}
             statusMessage={statusMessage}
             walletMessage={walletMessage}
-            walletAddress={walletAddress}
-            walletAvailable={walletAvailable}
+            walletAddress={walletAddress || null}
+            walletBalanceMnt={walletBalance ? Number(formatEther(walletBalance.value)) : null}
             onConnectWallet={() => void connectWallet()}
-            onCloseSuccess={() => setSuccessItemName(null)}
+            onCloseSuccess={() => {
+              setSuccessItemName(null);
+              setSuccessPaymentId(null);
+            }}
             onPickShop={(shopId) => setConfirmShopId(shopId)}
           />
         ) : null}
@@ -491,6 +513,7 @@ export default function Home() {
             exchangeRateJpyPerMnt={festival.exchangeRateJpyPerMnt}
             paymentMode={festival.paymentMode}
             onSelectShop={setSelectedShopId}
+            onCompleteOrder={(orderId) => void completeHandOver(orderId)}
           />
         ) : null}
 
@@ -522,7 +545,7 @@ export default function Home() {
             </p>
             {festival.paymentMode === "mantle-sepolia" ? (
               <p className="mt-2 rounded-[14px] bg-[#d8f8c7] px-3 py-2 text-sm font-black text-[#32611f]">
-                MNTのおさいふが開きます
+                送り先と金額はアプリが入れます。おさいふでは確認するだけです。
               </p>
             ) : null}
             <div className="mt-5 grid grid-cols-2 gap-3">
@@ -536,6 +559,7 @@ export default function Home() {
                   festival.paymentMode === "demo" &&
                   currentCustomer.balanceMnt <
                   calculateMntPrice(confirmShop.priceJpy, festival.exchangeRateJpyPerMnt)
+                  || (festival.paymentMode === "mantle-sepolia" && !isAddressLike(confirmShop.recipientAddress))
                 }
                 onClick={() => completePurchase(confirmShop)}
               >
@@ -583,10 +607,11 @@ function CustomerScreen({
   paymentMode,
   shops,
   successItemName,
+  successPayment,
   statusMessage,
   walletMessage,
   walletAddress,
-  walletAvailable,
+  walletBalanceMnt,
   onConnectWallet,
   onPickShop,
   onCloseSuccess,
@@ -596,10 +621,11 @@ function CustomerScreen({
   paymentMode: PaymentMode;
   shops: Shop[];
   successItemName: string | null;
+  successPayment: PaymentRecord | null;
   statusMessage: string;
   walletMessage: string;
   walletAddress: string | null;
-  walletAvailable: boolean;
+  walletBalanceMnt: number | null;
   onConnectWallet: () => void;
   onPickShop: (shopId: string) => void;
   onCloseSuccess: () => void;
@@ -625,24 +651,16 @@ function CustomerScreen({
           <p className="text-base font-black text-[#32611f]">{customer.name}</p>
           <p className="text-xl font-black text-[#32611f]">MNTのおさいふ</p>
           {walletAddress ? (
-            <p className="mt-2 font-mono text-2xl font-black">{shortHash(walletAddress)}</p>
+            <>
+              <p className="mt-2 font-mono text-2xl font-black">{shortHash(walletAddress)}</p>
+              <p className="mt-1 text-4xl font-black">{walletBalanceMnt === null ? "--" : formatMnt(walletBalanceMnt)} MNT</p>
+            </>
           ) : (
             <button className="touch-button buy-button mt-3 w-full text-xl" type="button" onClick={onConnectWallet}>
               おさいふをつなぐ
             </button>
           )}
-          <p className="mt-2 text-sm font-bold text-[#47713a]">のこりMNTは おさいふで見ます</p>
-          {!walletAvailable ? (
-            <div className="mt-3 rounded-[18px] bg-white p-3">
-              <p className="text-sm font-black text-[#7b4b21]">MetaMaskなどのおさいふアプリで開いてね</p>
-              <a className="touch-button small-button mt-3 inline-flex w-full items-center justify-center bg-[#ffdf63]" href={getMetaMaskDeepLink()}>
-                MetaMaskで開く
-              </a>
-              <a className="touch-button small-button mt-2 inline-flex w-full items-center justify-center bg-[#f7efe2]" href={getMetaMaskDirectLink()}>
-                MetaMaskアプリを開く
-              </a>
-            </div>
-          ) : null}
+          <p className="mt-2 text-sm font-bold text-[#47713a]">つながっているおさいふ</p>
           {walletMessage ? <p className="mt-2 text-sm font-black text-[#32611f]">{walletMessage}</p> : null}
         </div>
       )}
@@ -656,8 +674,40 @@ function CustomerScreen({
       {successItemName ? (
         <section className="mt-4 rounded-[28px] bg-[#d8f8c7] p-5 text-center shadow-sm">
           <p className="text-5xl">🎉</p>
-          <h2 className="mt-2 text-3xl font-black">かえたよ！</h2>
-          <p className="mt-2 text-xl font-bold">{successItemName}を おみせでもらってね！</p>
+          <h2 className="mt-2 text-3xl font-black">
+            {successPayment?.status === "completed"
+              ? "おかいもの完了！"
+              : paymentMode === "mantle-sepolia"
+                ? "かえたよ！"
+                : "かえたよ！"}
+          </h2>
+          <p className="mt-2 text-xl font-bold">
+            {successPayment?.status === "completed" ? (
+              "ありがとう！"
+            ) : (
+              <>
+                {successItemName}と
+                <br />
+                こうかんしてね！
+              </>
+            )}
+          </p>
+          {successPayment ? (
+            <div className="mt-3 rounded-[18px] bg-white/70 px-3 py-3 text-sm font-black text-[#32611f]">
+              <p>注文ID {successPayment.id.slice(-8)}</p>
+              <p>
+                {successPayment.itemName} / {formatMnt(successPayment.priceMnt)} MNT
+              </p>
+              {successPayment.transactionHash ? <p>Tx {shortHash(successPayment.transactionHash)}</p> : null}
+              <p>
+                {successPayment.status === "completed"
+                  ? "おみせOK"
+                  : successPayment.status === "confirmed"
+                    ? "支払い確認済み"
+                    : "確認中"}
+              </p>
+            </div>
+          ) : null}
           <button className="touch-button mt-4 bg-white" type="button" onClick={onCloseSuccess}>
             OK
           </button>
@@ -667,30 +717,28 @@ function CustomerScreen({
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         {shops.map((shop) => {
           const priceMnt = calculateMntPrice(shop.priceJpy, exchangeRateJpyPerMnt);
-          const canBuy = paymentMode === "mantle-sepolia" || customer.balanceMnt >= priceMnt;
+          const hasRecipient = isAddressLike(shop.recipientAddress);
+          const canBuy = paymentMode === "mantle-sepolia" ? Boolean(walletAddress && hasRecipient) : customer.balanceMnt >= priceMnt;
           const buttonLabel =
             paymentMode === "mantle-sepolia"
-              ? walletAvailable
-                ? walletAddress
+              ? !hasRecipient
+                ? "おみせ準備中"
+                : walletAddress
                   ? "おさいふで はらう"
                   : "おさいふをつなぐ"
-                : "MetaMaskで開く"
               : canBuy
                 ? shop.actionLabel
                 : "たりない";
 
           function handleShopButton() {
-            if (paymentMode === "mantle-sepolia" && !walletAvailable) {
-              window.location.href = getMetaMaskDirectLink();
-              return;
-            }
-
             if (paymentMode === "mantle-sepolia" && !walletAddress) {
               onConnectWallet();
               return;
             }
 
-            onPickShop(shop.id);
+            if (canBuy) {
+              onPickShop(shop.id);
+            }
           }
 
           return (
@@ -728,6 +776,7 @@ function MerchantScreen({
   exchangeRateJpyPerMnt,
   paymentMode,
   onSelectShop,
+  onCompleteOrder,
 }: {
   selectedShopId: string;
   selectedStats?: {
@@ -746,6 +795,7 @@ function MerchantScreen({
   exchangeRateJpyPerMnt: number;
   paymentMode: PaymentMode;
   onSelectShop: (shopId: string) => void;
+  onCompleteOrder: (orderId: string) => void;
 }) {
   if (!selectedStats) {
     return null;
@@ -788,7 +838,17 @@ function MerchantScreen({
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <Metric label="NETWORK" value={paymentMode === "mantle-sepolia" ? "Mantle Sepolia / On-chain" : "Mantle Sepolia / Demo"} />
         <Metric label="1 MNTのねだん" value={`${formatYen(exchangeRateJpyPerMnt)}円`} />
+        <Metric
+          label="RECEIVE"
+          value={selectedStats.shop.recipientAddress ? shortHash(selectedStats.shop.recipientAddress) : "未設定"}
+        />
       </div>
+
+      {paymentMode === "mantle-sepolia" && !isAddressLike(selectedStats.shop.recipientAddress) ? (
+        <p className="mt-3 rounded-lg border border-[#f8d45d]/40 bg-[#f8d45d]/15 px-4 py-3 text-sm font-black text-[#f8d45d]">
+          受取ウォレットを設定してください。未設定のお店はオンチェーン購入できません。
+        </p>
+      ) : null}
 
       <section className="mt-5 rounded-lg border border-white/10 bg-[#101715]">
         <div className="border-b border-white/10 px-4 py-3">
@@ -797,25 +857,51 @@ function MerchantScreen({
         <div className="divide-y divide-white/10">
           {selectedStats.records.length > 0 ? (
             selectedStats.records.slice(0, 12).map((record) => (
-              <div key={record.id} className="grid grid-cols-[4rem_1fr_auto] items-center gap-3 px-4 py-4">
+              <div key={record.id} className="grid gap-3 px-4 py-4 sm:grid-cols-[4rem_1fr_auto] sm:items-center">
                 <p className="font-mono text-sm text-white/70">{formatTime(record.createdAt)}</p>
                 <div>
-                  <p className="font-bold">{record.itemName} ×{record.quantity}</p>
+                  <p className="font-bold">
+                    {record.itemName} ×{record.quantity}
+                    <span className="ml-2 rounded-full bg-white/10 px-2 py-1 text-xs">{statusLabel(record.status)}</span>
+                  </p>
                   <p className="text-xs font-bold text-[#99dac7]">
                     {formatYen(record.priceJpy)}円 / 1 MNTのねだん {formatYen(record.exchangeRateJpyPerMnt)}円
                   </p>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 font-mono text-xs font-black text-white/65">
+                    <span>Order {record.id.slice(-8)}</span>
+                    {record.recipientAddress ? <span>To {shortHash(record.recipientAddress)}</span> : null}
+                    {record.blockNumber ? <span>Block {record.blockNumber}</span> : null}
+                  </div>
                   {record.transactionHash ? (
-                    <a
-                      className="mt-1 inline-block text-xs font-black text-[#f8d45d] underline"
-                      href={`https://explorer.sepolia.mantle.xyz/tx/${record.transactionHash}`}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Tx {shortHash(record.transactionHash)}
-                    </a>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                      <a
+                        className="inline-block text-xs font-black text-[#f8d45d] underline"
+                        href={`${MANTLE_SEPOLIA_EXPLORER_URL}/tx/${record.transactionHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Tx {shortHash(record.transactionHash)}
+                      </a>
+                      {record.payerAddress ? (
+                        <span className="font-mono text-xs font-black text-white/65">
+                          From {shortHash(record.payerAddress)}
+                        </span>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
-                <p className="font-mono text-lg font-black text-[#f8d45d]">+{formatMnt(record.priceMnt)} MNT</p>
+                <div className="text-left sm:text-right">
+                  <p className="font-mono text-lg font-black text-[#f8d45d]">+{formatMnt(record.priceMnt)} MNT</p>
+                  {(record.status === "confirmed" || (record.mode === "demo" && record.status === "recorded")) ? (
+                    <button
+                      className="mt-2 rounded-md bg-[#f8d45d] px-3 py-2 text-sm font-black text-[#23190b]"
+                      type="button"
+                      onClick={() => onCompleteOrder(record.id)}
+                    >
+                      商品をわたした！ OK
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ))
           ) : (
@@ -825,6 +911,28 @@ function MerchantScreen({
       </section>
     </section>
   );
+}
+
+function statusLabel(status: PaymentRecord["status"]) {
+  if (status === "recorded") {
+    return "Demo記録済み / 商品未渡し";
+  }
+  if (status === "pending_wallet") {
+    return "ウォレット確認待ち";
+  }
+  if (status === "submitted") {
+    return "送信済み / 確認中";
+  }
+  if (status === "confirmed") {
+    return "支払い確認済み / 商品未渡し";
+  }
+  if (status === "completed") {
+    return "完了";
+  }
+  if (status === "rejected") {
+    return "キャンセル";
+  }
+  return "失敗";
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

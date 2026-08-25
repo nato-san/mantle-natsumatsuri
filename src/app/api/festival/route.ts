@@ -1,5 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureCustomer, readState, recordPurchase, resetFestivalActivity, updateSettings } from "@/lib/festival-store";
+import {
+  completeOrder,
+  createOnchainOrder,
+  ensureCustomer,
+  markOrderSubmitted,
+  readState,
+  recordPurchase,
+  rejectOrder,
+  resetFestivalActivity,
+  updateSettings,
+  verifyOnchainOrder,
+} from "@/lib/festival-store";
 import type { PaymentMode, PaymentRecord, Shop } from "@/lib/festival-types";
 
 export const runtime = "nodejs";
@@ -15,6 +26,32 @@ type FestivalAction =
       transactionHash?: string;
       blockNumber?: number;
       gasUsed?: string;
+      payerAddress?: string;
+    }
+  | {
+      action: "create_onchain_order";
+      customerId: string;
+      shopId: string;
+      payerAddress: string;
+    }
+  | {
+      action: "submit_onchain_order";
+      orderId: string;
+      transactionHash: string;
+    }
+  | {
+      action: "verify_onchain_order";
+      orderId: string;
+      transactionHash: string;
+    }
+  | {
+      action: "reject_onchain_order";
+      orderId: string;
+      errorMessage?: string;
+    }
+  | {
+      action: "complete_order";
+      orderId: string;
     }
   | {
       action: "settings";
@@ -48,7 +85,44 @@ export async function POST(request: NextRequest) {
       transactionHash: body.transactionHash,
       blockNumber: body.blockNumber,
       gasUsed: body.gasUsed,
+      payerAddress: body.payerAddress,
     });
+    return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+  }
+
+  if (body.action === "create_onchain_order") {
+    const result = await createOnchainOrder(body.customerId, body.shopId, body.payerAddress);
+    return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+  }
+
+  if (body.action === "submit_onchain_order") {
+    const result = await markOrderSubmitted(body.orderId, body.transactionHash);
+    return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+  }
+
+  if (body.action === "verify_onchain_order") {
+    try {
+      const result = await verifyOnchainOrder(body.orderId, body.transactionHash);
+      return NextResponse.json(result, { status: result.ok ? 200 : 400 });
+    } catch (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          reason: "tx_verification_error",
+          message: error instanceof Error ? error.message : "unknown",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
+  if (body.action === "reject_onchain_order") {
+    const result = await rejectOrder(body.orderId, body.errorMessage);
+    return NextResponse.json(result);
+  }
+
+  if (body.action === "complete_order") {
+    const result = await completeOrder(body.orderId);
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   }
 

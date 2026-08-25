@@ -3,16 +3,26 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
+    "@metamask/connect-evm": "^2.1.1",
+    "@reown/appkit": "^1.8.23",
+    "@reown/appkit-adapter-wagmi": "^1.8.23",
+    "@tanstack/react-query": "^5.102.3",
+    "@walletconnect/ethereum-provider": "^2.23.10",
+    "@x402/core": "^2.23.0",
+    "@x402/evm": "^2.23.0",
+    "@x402/svm": "^2.23.0",
+    "accounts": "^0.17.0",
     "next": "16.3.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "viem": "^2.55.19"
+    "viem": "^2.55.19",
+    "wagmi": "^3.7.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

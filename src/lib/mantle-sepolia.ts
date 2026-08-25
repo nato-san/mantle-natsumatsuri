@@ -1,4 +1,5 @@
 import { defineChain } from "viem";
+import { MANTLE_SEPOLIA_EXPLORER_URL, MANTLE_SEPOLIA_RPC_URL, mantleSepoliaAddChainParameter } from "./mantle-sepolia-config";
 
 export const mantleSepolia = defineChain({
   id: 5003,
@@ -10,26 +11,15 @@ export const mantleSepolia = defineChain({
   },
   rpcUrls: {
     default: {
-      http: ["https://rpc.sepolia.mantle.xyz"],
+      http: [MANTLE_SEPOLIA_RPC_URL],
     },
   },
   blockExplorers: {
     default: {
       name: "Mantle Sepolia Explorer",
-      url: "https://explorer.sepolia.mantle.xyz",
+      url: MANTLE_SEPOLIA_EXPLORER_URL,
     },
   },
   testnet: true,
 });
-
-export const mantleSepoliaAddChainParameter = {
-  chainId: "0x138b",
-  chainName: "Mantle Sepolia",
-  nativeCurrency: {
-    name: "MNT",
-    symbol: "MNT",
-    decimals: 18,
-  },
-  rpcUrls: ["https://rpc.sepolia.mantle.xyz"],
-  blockExplorerUrls: ["https://explorer.sepolia.mantle.xyz"],
-};
+export { mantleSepoliaAddChainParameter };
