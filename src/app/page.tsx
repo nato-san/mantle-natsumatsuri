@@ -657,6 +657,30 @@ function CustomerScreen({
         {shops.map((shop) => {
           const priceMnt = calculateMntPrice(shop.priceJpy, exchangeRateJpyPerMnt);
           const canBuy = paymentMode === "mantle-sepolia" || customer.balanceMnt >= priceMnt;
+          const buttonLabel =
+            paymentMode === "mantle-sepolia"
+              ? walletAvailable
+                ? walletAddress
+                  ? "おさいふで はらう"
+                  : "おさいふをつなぐ"
+                : "MetaMaskで開く"
+              : canBuy
+                ? shop.actionLabel
+                : "たりない";
+
+          function handleShopButton() {
+            if (paymentMode === "mantle-sepolia" && !walletAvailable) {
+              window.location.href = getMetaMaskDeepLink();
+              return;
+            }
+
+            if (paymentMode === "mantle-sepolia" && !walletAddress) {
+              onConnectWallet();
+              return;
+            }
+
+            onPickShop(shop.id);
+          }
 
           return (
             <article key={shop.id} className="rounded-[28px] border-4 border-white bg-white p-5 shadow-sm">
@@ -673,9 +697,9 @@ function CustomerScreen({
                 className="touch-button buy-button mt-4 w-full text-3xl"
                 type="button"
                 disabled={!canBuy}
-                onClick={() => onPickShop(shop.id)}
+                onClick={handleShopButton}
               >
-                {canBuy ? (paymentMode === "mantle-sepolia" ? "おさいふで はらう" : shop.actionLabel) : "たりない"}
+                {buttonLabel}
               </button>
             </article>
           );
