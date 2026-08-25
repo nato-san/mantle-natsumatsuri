@@ -265,7 +265,7 @@ export default function Home() {
   async function completePurchase(shop: Shop) {
     const priceMnt = calculateMntPrice(shop.priceJpy, festival.exchangeRateJpyPerMnt);
 
-    if (currentCustomer.balanceMnt < priceMnt) {
+    if (festival.paymentMode === "demo" && currentCustomer.balanceMnt < priceMnt) {
       setConfirmShopId(null);
       return;
     }
@@ -512,11 +512,16 @@ export default function Home() {
             <div className="text-6xl">{confirmShop.emoji}</div>
             <h2 className="mt-3 text-2xl font-black">
               {confirmShop.name}を {formatMnt(calculateMntPrice(confirmShop.priceJpy, festival.exchangeRateJpyPerMnt))}{" "}
-              MNTでかう？
+              MNTで{festival.paymentMode === "mantle-sepolia" ? "はらう？" : "かう？"}
             </h2>
             <p className="mt-2 text-base font-bold text-[#7a5232]">
               {formatYen(confirmShop.priceJpy)}円 / 1 MNTのねだん {formatYen(festival.exchangeRateJpyPerMnt)}円
             </p>
+            {festival.paymentMode === "mantle-sepolia" ? (
+              <p className="mt-2 rounded-[14px] bg-[#d8f8c7] px-3 py-2 text-sm font-black text-[#32611f]">
+                MNTのおさいふが開きます
+              </p>
+            ) : null}
             <div className="mt-5 grid grid-cols-2 gap-3">
               <button className="touch-button cancel-button" type="button" onClick={() => setConfirmShopId(null)}>
                 やめる
@@ -525,12 +530,13 @@ export default function Home() {
                 className="touch-button buy-button"
                 type="button"
                 disabled={
+                  festival.paymentMode === "demo" &&
                   currentCustomer.balanceMnt <
                   calculateMntPrice(confirmShop.priceJpy, festival.exchangeRateJpyPerMnt)
                 }
                 onClick={() => completePurchase(confirmShop)}
               >
-                {confirmShop.actionLabel}
+                {festival.paymentMode === "mantle-sepolia" ? "はらう" : confirmShop.actionLabel}
               </button>
             </div>
           </section>
@@ -597,11 +603,20 @@ function CustomerScreen({
         </p>
       </div>
 
-      <div className="rounded-[28px] bg-[#ffed9f] p-5 text-center shadow-sm">
-        <p className="text-base font-black text-[#8a3b1e]">{customer.name}</p>
-        <p className="text-xl font-black text-[#8a3b1e]">のこり</p>
-        <p className="mt-1 text-6xl font-black leading-none">{formatMnt(customer.balanceMnt)} MNT</p>
-      </div>
+      {paymentMode === "demo" ? (
+        <div className="rounded-[28px] bg-[#ffed9f] p-5 text-center shadow-sm">
+          <p className="text-base font-black text-[#8a3b1e]">{customer.name}</p>
+          <p className="text-xl font-black text-[#8a3b1e]">のこり</p>
+          <p className="mt-1 text-6xl font-black leading-none">{formatMnt(customer.balanceMnt)} MNT</p>
+        </div>
+      ) : (
+        <div className="rounded-[28px] bg-[#d8f8c7] p-5 text-center shadow-sm">
+          <p className="text-base font-black text-[#32611f]">{customer.name}</p>
+          <p className="text-xl font-black text-[#32611f]">MNTのおさいふ</p>
+          <p className="mt-2 text-2xl font-black">買うときに ひらくよ</p>
+          <p className="mt-2 text-sm font-bold text-[#47713a]">のこりMNTは おさいふで見ます</p>
+        </div>
+      )}
 
       {statusMessage ? (
         <p className="mt-3 rounded-[18px] bg-white px-4 py-3 text-center text-base font-black text-[#7b4b21]">
@@ -623,7 +638,7 @@ function CustomerScreen({
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         {shops.map((shop) => {
           const priceMnt = calculateMntPrice(shop.priceJpy, exchangeRateJpyPerMnt);
-          const canBuy = customer.balanceMnt >= priceMnt;
+          const canBuy = paymentMode === "mantle-sepolia" || customer.balanceMnt >= priceMnt;
 
           return (
             <article key={shop.id} className="rounded-[28px] border-4 border-white bg-white p-5 shadow-sm">
@@ -642,7 +657,7 @@ function CustomerScreen({
                 disabled={!canBuy}
                 onClick={() => onPickShop(shop.id)}
               >
-                {canBuy ? shop.actionLabel : "たりない"}
+                {canBuy ? (paymentMode === "mantle-sepolia" ? "おさいふで はらう" : shop.actionLabel) : "たりない"}
               </button>
             </article>
           );
