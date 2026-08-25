@@ -106,6 +106,15 @@ function shortHash(value: string) {
   return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
+function getMetaMaskDeepLink() {
+  if (typeof window === "undefined") {
+    return "https://metamask.app.link/";
+  }
+
+  const url = window.location.href.replace(/^https?:\/\//, "");
+  return `https://metamask.app.link/dapp/${url}`;
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("ja-JP", {
     hour: "2-digit",
@@ -189,6 +198,7 @@ export default function Home() {
   const [confirmShopId, setConfirmShopId] = useState<string | null>(null);
   const [successItemName, setSuccessItemName] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("共有データをよみこみ中");
+  const [walletMessage, setWalletMessage] = useState("");
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [walletAvailable, setWalletAvailable] = useState(false);
 
@@ -357,20 +367,20 @@ export default function Home() {
 
     if (!provider) {
       setWalletAvailable(false);
-      setStatusMessage("MetaMaskなどのおさいふアプリで開いてね");
+      setWalletMessage("このブラウザではおさいふが見つかりません");
       return;
     }
 
     setWalletAvailable(true);
-    setStatusMessage("MNTのおさいふをつないでいます");
+    setWalletMessage("MNTのおさいふをつないでいます");
 
     try {
       await ensureMantleSepolia(provider);
       const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
       setWalletAddress(accounts[0] || null);
-      setStatusMessage(accounts[0] ? "おさいふがつながりました" : "おさいふをつなげませんでした");
+      setWalletMessage(accounts[0] ? "おさいふがつながりました" : "おさいふをつなげませんでした");
     } catch {
-      setStatusMessage("おさいふをつなげませんでした");
+      setWalletMessage("おさいふをつなげませんでした");
     }
   }
 
@@ -455,6 +465,7 @@ export default function Home() {
             shops={festival.shops}
             successItemName={successItemName}
             statusMessage={statusMessage}
+            walletMessage={walletMessage}
             walletAddress={walletAddress}
             walletAvailable={walletAvailable}
             onConnectWallet={() => void connectWallet()}
@@ -565,6 +576,7 @@ function CustomerScreen({
   shops,
   successItemName,
   statusMessage,
+  walletMessage,
   walletAddress,
   walletAvailable,
   onConnectWallet,
@@ -577,6 +589,7 @@ function CustomerScreen({
   shops: Shop[];
   successItemName: string | null;
   statusMessage: string;
+  walletMessage: string;
   walletAddress: string | null;
   walletAvailable: boolean;
   onConnectWallet: () => void;
@@ -612,10 +625,14 @@ function CustomerScreen({
           )}
           <p className="mt-2 text-sm font-bold text-[#47713a]">のこりMNTは おさいふで見ます</p>
           {!walletAvailable ? (
-            <p className="mt-2 rounded-[14px] bg-white px-3 py-2 text-sm font-black text-[#7b4b21]">
-              MetaMaskなどのおさいふアプリで開いてね
-            </p>
+            <div className="mt-3 rounded-[18px] bg-white p-3">
+              <p className="text-sm font-black text-[#7b4b21]">MetaMaskなどのおさいふアプリで開いてね</p>
+              <a className="touch-button small-button mt-3 inline-flex w-full items-center justify-center bg-[#ffdf63]" href={getMetaMaskDeepLink()}>
+                MetaMaskで開く
+              </a>
+            </div>
           ) : null}
+          {walletMessage ? <p className="mt-2 text-sm font-black text-[#32611f]">{walletMessage}</p> : null}
         </div>
       )}
 
