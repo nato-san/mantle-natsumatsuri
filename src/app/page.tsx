@@ -115,6 +115,15 @@ function getMetaMaskDeepLink() {
   return `https://metamask.app.link/dapp/${url}`;
 }
 
+function getMetaMaskDirectLink() {
+  if (typeof window === "undefined") {
+    return "metamask://";
+  }
+
+  const url = window.location.href.replace(/^https?:\/\//, "");
+  return `metamask://dapp/${url}`;
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("ja-JP", {
     hour: "2-digit",
@@ -163,13 +172,12 @@ async function sendMantleSepoliaPayment(shop: Shop, priceMnt: number) {
     throw new Error("recipient_missing");
   }
 
-  await ensureMantleSepolia(provider);
-
   const walletClient = createWalletClient({
     chain: mantleSepolia,
     transport: custom(provider),
   });
   const [account] = await walletClient.requestAddresses();
+  await ensureMantleSepolia(provider);
   const hash = await walletClient.sendTransaction({
     account,
     to: shop.recipientAddress as Address,
@@ -375,8 +383,8 @@ export default function Home() {
     setWalletMessage("MNTのおさいふをつないでいます");
 
     try {
-      await ensureMantleSepolia(provider);
       const accounts = (await provider.request({ method: "eth_requestAccounts" })) as string[];
+      await ensureMantleSepolia(provider);
       setWalletAddress(accounts[0] || null);
       setWalletMessage(accounts[0] ? "おさいふがつながりました" : "おさいふをつなげませんでした");
     } catch {
@@ -630,6 +638,9 @@ function CustomerScreen({
               <a className="touch-button small-button mt-3 inline-flex w-full items-center justify-center bg-[#ffdf63]" href={getMetaMaskDeepLink()}>
                 MetaMaskで開く
               </a>
+              <a className="touch-button small-button mt-2 inline-flex w-full items-center justify-center bg-[#f7efe2]" href={getMetaMaskDirectLink()}>
+                MetaMaskアプリを開く
+              </a>
             </div>
           ) : null}
           {walletMessage ? <p className="mt-2 text-sm font-black text-[#32611f]">{walletMessage}</p> : null}
@@ -670,7 +681,7 @@ function CustomerScreen({
 
           function handleShopButton() {
             if (paymentMode === "mantle-sepolia" && !walletAvailable) {
-              window.location.href = getMetaMaskDeepLink();
+              window.location.href = getMetaMaskDirectLink();
               return;
             }
 
