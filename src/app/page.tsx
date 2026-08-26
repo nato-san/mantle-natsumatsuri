@@ -72,19 +72,16 @@ function normalizeFestivalId(value?: string | null) {
 
 function getFestivalId() {
   if (typeof window === "undefined") {
-    return "wagaya";
+    return "";
   }
 
   const params = new URLSearchParams(window.location.search);
   const fromUrl = normalizeFestivalId(params.get("festival"));
   const saved = normalizeFestivalId(window.localStorage.getItem(FESTIVAL_STORAGE_KEY));
-  const festivalId = fromUrl || saved || createId("festival").replace(/[^a-z0-9-]/g, "-").slice(0, 32);
+  const festivalId = fromUrl || saved;
 
-  window.localStorage.setItem(FESTIVAL_STORAGE_KEY, festivalId);
-
-  if (!fromUrl) {
-    params.set("festival", festivalId);
-    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  if (festivalId) {
+    window.localStorage.setItem(FESTIVAL_STORAGE_KEY, festivalId);
   }
 
   return festivalId;
@@ -208,7 +205,12 @@ export default function Home() {
 
   useEffect(() => {
     const activeFestivalId = getFestivalId();
-    window.setTimeout(() => setFestivalId(activeFestivalId), 0);
+    window.setTimeout(() => {
+      setFestivalId(activeFestivalId);
+      if (!activeFestivalId) {
+        setStatusMessage("");
+      }
+    }, 0);
   }, []);
 
   useEffect(() => {
@@ -550,7 +552,7 @@ export default function Home() {
     setConfirmShopId(null);
     setStatusMessage("新しいお祭りを作っています");
     setFestivalId(nextFestivalId);
-    setScreen("home");
+    setScreen("settings");
   }
 
   return (
@@ -582,7 +584,12 @@ export default function Home() {
         ) : null}
 
         {screen === "home" ? (
-          <HomeScreen festivalName={festival.festivalName} festivalId={festivalId} onNavigate={setScreen} />
+          <HomeScreen
+            festivalName={festival.festivalName}
+            festivalId={festivalId}
+            onCreateFestival={createNewFestival}
+            onNavigate={setScreen}
+          />
         ) : null}
 
         {screen === "customer" ? (
@@ -680,12 +687,40 @@ export default function Home() {
 function HomeScreen({
   festivalName,
   festivalId,
+  onCreateFestival,
   onNavigate,
 }: {
   festivalName: string;
   festivalId: string;
+  onCreateFestival: () => void;
   onNavigate: (screen: Screen) => void;
 }) {
+  if (!festivalId) {
+    return (
+      <section className="flex flex-1 flex-col px-5 py-8">
+        <div className="mb-8">
+          <p className="text-sm font-black uppercase tracking-[0.18em] text-[#9a3f2c]">Mantleなつまつり</p>
+          <h1 className="mt-2 text-4xl font-black leading-tight text-[#25130a] sm:text-6xl">おうちのなつまつりを作る</h1>
+          <p className="mt-4 max-w-xl text-lg font-bold leading-8 text-[#6b4b2f]">
+            家族だけのお祭りURLを作って、お店端末とお客さん端末で遊べます。
+          </p>
+        </div>
+
+        <div className="grid flex-1 content-center gap-4">
+          <button className="role-button bg-[#ffdf63]" type="button" onClick={onCreateFestival}>
+            <span className="text-7xl">🏮</span>
+            <span>お祭りを作る</span>
+          </button>
+          <div className="rounded-[24px] bg-white p-5 text-center shadow-sm">
+            <p className="text-lg font-black text-[#7b4b21]">
+              もらったお祭りURLを開いた時は、そのまま参加できます。
+            </p>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="flex flex-1 flex-col px-5 py-8">
       <div className="mb-8">
