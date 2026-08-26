@@ -534,6 +534,47 @@ export default function Home() {
     }
   }
 
+  function goToCreationTop() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.removeItem(FESTIVAL_STORAGE_KEY);
+    window.history.pushState(null, "", window.location.pathname);
+    setFestivalId("");
+    setFestival(initialState);
+    setCurrentCustomer(fallbackCustomer);
+    setSuccessItemName(null);
+    setSuccessPaymentId(null);
+    setConfirmShopId(null);
+    setStatusMessage("");
+    setScreen("home");
+  }
+
+  async function deleteCurrentFestival() {
+    if (!festivalId || typeof window === "undefined") {
+      return;
+    }
+
+    const shouldDelete = window.confirm("このお祭りを削除します。売上やお客さんの記録も消えます。よろしいですか？");
+    if (!shouldDelete) {
+      return;
+    }
+
+    setStatusMessage("お祭りを削除中");
+
+    try {
+      await fetch("/api/festival", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete_festival", festivalId }),
+      });
+      goToCreationTop();
+    } catch {
+      setStatusMessage("お祭りを削除できません");
+    }
+  }
+
   function createNewFestival() {
     if (typeof window === "undefined") {
       return;
@@ -572,9 +613,14 @@ export default function Home() {
                 <p className="max-w-[13rem] truncate text-lg font-black sm:max-w-none">{festival.festivalName}</p>
               </div>
               {screen === "merchant" ? (
-                <button className="touch-button small-button" type="button" onClick={() => setScreen("settings")}>
-                  設定
-                </button>
+                <div className="flex items-center gap-2">
+                  <button className="touch-button small-button hidden sm:block" type="button" onClick={goToCreationTop}>
+                    TOP
+                  </button>
+                  <button className="touch-button small-button" type="button" onClick={() => setScreen("settings")}>
+                    設定
+                  </button>
+                </div>
               ) : (
                 <div className="min-w-[4.5rem]" aria-hidden="true" />
               )}
@@ -638,6 +684,8 @@ export default function Home() {
               }
             }}
             onResetDemo={() => void resetDemo()}
+            onBackToTop={goToCreationTop}
+            onDeleteFestival={() => void deleteCurrentFestival()}
           />
         ) : null}
       </div>
@@ -701,7 +749,7 @@ function HomeScreen({
           <p className="text-sm font-black uppercase tracking-[0.18em] text-[#9a3f2c]">Mantleなつまつり</p>
           <h1 className="mt-2 text-4xl font-black leading-tight text-[#25130a] sm:text-6xl">おうちのなつまつりを作る</h1>
           <p className="mt-4 max-w-xl text-lg font-bold leading-8 text-[#6b4b2f]">
-            家族だけのお祭りURLを作って、お店端末とお客さん端末で遊べます。
+            家族だけのお祭りURLを作って、お店端末とお客さん端末で遊べます。作ったURLを家族や友だちに送ると、同じお祭りに参加できます。
           </p>
         </div>
 
@@ -711,9 +759,12 @@ function HomeScreen({
             <span>お祭りを作る</span>
           </button>
           <div className="rounded-[24px] bg-white p-5 text-center shadow-sm">
-            <p className="text-lg font-black text-[#7b4b21]">
-              もらったお祭りURLを開いた時は、そのまま参加できます。
-            </p>
+            <p className="text-lg font-black text-[#7b4b21]">使い方</p>
+            <div className="mt-3 grid gap-2 text-left text-base font-bold leading-7 text-[#6b4b2f]">
+              <p>1. お祭りを作る</p>
+              <p>2. お店で名前や商品を決める</p>
+              <p>3. お祭りURLを共有して遊ぶ</p>
+            </div>
           </div>
         </div>
       </section>
@@ -1128,6 +1179,8 @@ function SettingsScreen({
   statusMessage,
   onSaveSettings,
   onResetDemo,
+  onBackToTop,
+  onDeleteFestival,
 }: {
   festival: FestivalState;
   statusMessage: string;
@@ -1135,6 +1188,8 @@ function SettingsScreen({
     nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "paymentMode" | "shops">,
   ) => Promise<void>;
   onResetDemo: () => void;
+  onBackToTop: () => void;
+  onDeleteFestival: () => void;
 }) {
   const [draft, setDraft] = useState(() => ({
     festivalName: festival.festivalName,
@@ -1407,6 +1462,25 @@ function SettingsScreen({
         <button className="touch-button cancel-button mt-4" type="button" onClick={onResetDemo}>
           残高と履歴をリセット
         </button>
+      </section>
+
+      <section className="mt-5 rounded-lg border border-[#ead7aa] bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-black">お祭りの管理</h2>
+        <p className="mt-2 text-sm font-bold leading-6 text-[#6b4b2f]">
+          アプリの最初の画面に戻って、別のお祭りを作れます。もう使わないお祭りは削除できます。
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <button className="touch-button cancel-button" type="button" onClick={onBackToTop}>
+            作成TOPへ戻る
+          </button>
+          <button
+            className="touch-button border-2 border-[#d84630] bg-white text-[#b62e22]"
+            type="button"
+            onClick={onDeleteFestival}
+          >
+            このお祭りを削除
+          </button>
+        </div>
       </section>
     </section>
   );

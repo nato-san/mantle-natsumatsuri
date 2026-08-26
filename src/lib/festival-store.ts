@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createPublicClient, formatEther, getAddress, http, parseEther, type Hash } from "viem";
 import { mantleSepolia } from "./mantle-sepolia";
@@ -157,6 +157,34 @@ async function saveState(festivalId: string, state: FestivalState) {
 
   await mkdir(FESTIVALS_DIR, { recursive: true });
   await writeFile(getFestivalFile(festivalId), JSON.stringify(state, null, 2));
+}
+
+export async function deleteFestivalState(festivalId: string) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const redis = getRedisConfig();
+
+  if (redis) {
+    const response = await fetch(`${redis.url}/del/${encodeURIComponent(getRedisKey(normalizedFestivalId))}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error("redis_delete_failed");
+    }
+
+    return { ok: true as const, festivalId: normalizedFestivalId };
+  }
+
+  try {
+    await unlink(getFestivalFile(normalizedFestivalId));
+  } catch {
+    // Deleting an already-missing festival should still return the user to the app top.
+  }
+
+  return { ok: true as const, festivalId: normalizedFestivalId };
 }
 
 function normalizeState(parsed: Partial<FestivalState>): FestivalState {

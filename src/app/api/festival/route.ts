@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   completeOrder,
   createOnchainOrder,
+  deleteFestivalState,
   ensureCustomer,
   markOrderSubmitted,
   readState,
@@ -65,6 +66,9 @@ type FestivalAction = {
     }
   | {
       action: "reset";
+    }
+  | {
+      action: "delete_festival";
     }
 );
 
@@ -152,6 +156,11 @@ export async function POST(request: NextRequest) {
   if (body.action === "reset") {
     const state = await resetFestivalActivity(festivalId);
     return NextResponse.json({ ok: true, state });
+  }
+
+  if (body.action === "delete_festival") {
+    const result = await deleteFestivalState(festivalId);
+    return NextResponse.json(result);
   }
 
   return NextResponse.json({ ok: false, reason: "unknown_action" }, { status: 400 });
