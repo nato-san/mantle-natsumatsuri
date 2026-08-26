@@ -747,9 +747,11 @@ function HomeScreen({
       <section className="flex flex-1 flex-col px-5 py-8">
         <div className="mb-8">
           <p className="text-sm font-black uppercase tracking-[0.18em] text-[#9a3f2c]">Mantleなつまつり</p>
-          <h1 className="mt-2 text-4xl font-black leading-tight text-[#25130a] sm:text-6xl">おうちのなつまつりを作る</h1>
+          <h1 className="mt-2 text-4xl font-black leading-tight text-[#25130a] sm:text-6xl">
+            お祭りURLを作って、共有しよう！
+          </h1>
           <p className="mt-4 max-w-xl text-lg font-bold leading-8 text-[#6b4b2f]">
-            家族だけのお祭りURLを作って、お店端末とお客さん端末で遊べます。作ったURLを家族や友だちに送ると、同じお祭りに参加できます。
+            共有した仲間と、お店端末とお客さん端末に分かれてお祭り遊びができるよ。
           </p>
         </div>
 
@@ -759,11 +761,11 @@ function HomeScreen({
             <span>お祭りを作る</span>
           </button>
           <div className="rounded-[24px] bg-white p-5 text-center shadow-sm">
-            <p className="text-lg font-black text-[#7b4b21]">使い方</p>
+            <p className="text-lg font-black text-[#7b4b21]">遊び方</p>
             <div className="mt-3 grid gap-2 text-left text-base font-bold leading-7 text-[#6b4b2f]">
-              <p>1. お祭りを作る</p>
+              <p>1. お祭りURLを作る</p>
               <p>2. お店で名前や商品を決める</p>
-              <p>3. お祭りURLを共有して遊ぶ</p>
+              <p>3. URLを共有してみんなで遊ぶ</p>
             </div>
           </div>
         </div>
