@@ -46,42 +46,72 @@ Vercelに公開すると、家ごとに別々のお祭りURLを作れます。A�
   - ポップコーン: 100円
   - わなげ: 100円
 
-## 使い方
+## アプリの使い方
 
-依存関係を入れます。
+### 1. お祭りURLを作る
 
-```bash
-npm install
-```
-
-開発用に起動します。
-
-```bash
-npm run dev -- --hostname 0.0.0.0 --port 3000
-```
-
-本番ビルドで確認する場合はこちらです。
-
-```bash
-npm run build
-npm run start -- --hostname 0.0.0.0 --port 3000
-```
-
-同じMacで見る場合:
+まず、アプリのトップURLを開きます。
 
 ```text
-http://127.0.0.1:3000
+https://example.vercel.app/
 ```
 
-スマホや別端末で見る場合は、アプリを起動しているPC/Macと同じWi-Fiにつなぎ、そのPC/MacのIPアドレスで開きます。
-
-例:
+トップ画面で `お祭りURLを作る` を押すと、自分たち専用のお祭りURLができます。
 
 ```text
-http://192.168.11.17:3000
+https://example.vercel.app/?festival=festival-123
 ```
 
-## 複数端末での動き
+このURLを共有すると、同じお祭りに参加できます。
+
+### 2. お店端末を用意する
+
+お祭りURLを開いて、`おみせ` を押します。
+
+お店側では、以下ができます。
+
+- 売上を見る
+- 店舗ごとの履歴を見る
+- お祭りURLをコピーする
+- お祭り名やお店を設定する
+- 1 MNTのねだんを変える
+- `れんしゅう` / `test MNT` を切り替える
+- 古いお祭りを削除する
+
+設定はお店側からだけ操作します。
+
+### 3. お客さん端末を用意する
+
+同じお祭りURLをスマホや別のPCで開いて、`おきゃくさん` を押します。
+
+お客さん側では、むずかしい設定は出ません。
+
+- げんざいの 1 MNT のねだんを見る
+- 商品を見る
+- `かう！` / `あそぶ！` を押す
+- 買えたら、お店で商品と引き換える
+
+れんしゅうモードでは、端末ごとに別のお客さんとして扱われます。お客さんごとに所持金が分かれるので、兄弟や友だちがそれぞれのスマホで遊べます。
+
+### 4. みんなに共有する
+
+アプリそのものを紹介する時は、`?festival=...` が付いていないトップURLを共有します。
+
+```text
+https://example.vercel.app/
+```
+
+遊ぶ人は自分で `お祭りURLを作る` を押して、自分の家のお祭りを作れます。
+
+すでに作ったお祭りに参加してもらう時は、お祭りID付きのURLを共有します。
+
+```text
+https://example.vercel.app/?festival=festival-123
+```
+
+Aさんの家とBさんの家が同じ時間に使っても、お祭りURLが違えば、設定・お客さん・売上履歴は混ざりません。
+
+## データ共有の仕組み
 
 このアプリは `src/app/api/festival` の共有APIで状態を保存します。
 
@@ -103,46 +133,83 @@ https://example.vercel.app/?festival=festival-123
 
 お客さん端末ごとにブラウザ内で別IDを作るため、複数人で開いても所持金は別々です。お客さんIDはお祭りIDごとに分かれるため、Aさん宅のお客さん残高とBさん宅のお客さん残高は混ざりません。お客さんが商品を買うと、そのお祭りの共有APIに購入履歴が保存され、同じURLのお店画面に反映されます。
 
-現在の保存先はローカルファイルです。
+ローカルで動かす場合、保存先はローカルファイルです。
 
 ```text
 data/festivals/{festivalId}.json
 ```
 
+Vercelで公開してUpstash Redisを接続している場合、保存先はRedisになります。
+
 古いローカル保存がある場合は、初期のお祭りID `wagaya` として `data/festival-state.json` から自動移行します。
 
 このファイルには当日の履歴やお客さん情報が入るため、GitHubには含めません。
 
-## Vercelで公開する
+## セットアップ方法
+
+### ローカルで動かす
+
+依存関係を入れます。
+
+```bash
+npm install
+```
+
+開発用に起動します。
+
+```bash
+npm run dev -- --hostname 0.0.0.0 --port 3000
+```
+
+同じMacで見る場合:
+
+```text
+http://127.0.0.1:3000
+```
+
+スマホや別端末で見る場合は、アプリを起動しているPC/Macと同じWi-Fiにつなぎ、そのPC/MacのIPアドレスで開きます。
+
+例:
+
+```text
+http://192.168.11.17:3000
+```
+
+本番ビルドで確認する場合はこちらです。
+
+```bash
+npm run build
+npm run start -- --hostname 0.0.0.0 --port 3000
+```
+
+### Vercelで公開する
 
 Vercelに公開すると、誰でもスマホやPCから使えます。
 
 ただしVercel上ではローカルファイル保存が長期保存に向かないため、公開して家ごとにちゃんと使う場合は Upstash Redis を使います。
 
-Vercelの環境変数に以下を設定してください。
+VercelのStorage連携でUpstash Redisを接続すると、自動で環境変数が追加されます。
+
+このアプリは、以下の環境変数名に対応しています。
 
 ```text
-UPSTASH_REDIS_REST_URL=Upstash RedisのREST URL
-UPSTASH_REDIS_REST_TOKEN=Upstash RedisのREST Token
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=ReownのProject ID
-```
-
-VercelのStorage連携で以下の名前が入る場合も、そのまま使えます。
-
-```text
+UPSTASH_REDIS_REST_URL
+UPSTASH_REDIS_REST_TOKEN
 KV_REST_API_URL
 KV_REST_API_TOKEN
+STORAGE_URL
+STORAGE_TOKEN
+STORAGE_REST_API_URL
+STORAGE_REST_API_TOKEN
+STORAGE_KV_REST_API_URL
+STORAGE_KV_REST_API_TOKEN
 ```
 
-この環境変数がある場合、保存先は自動でUpstash Redisになります。ない場合は、ローカル開発用として `data/festivals/{festivalId}.json` に保存します。
+WalletConnectを使う場合は、ReownのProject IDも設定します。
 
-公開後は、まずアプリのトップURLを共有します。使う人は `お祭りURLを作る` を押して自分たちのお祭りを作ります。
-
-作った後は、お店画面の `Festival URL` を家族の端末で開くと同じお祭りに入れます。別の家で使う場合は、トップURLから新しく作るか、お店画面の `新しいお祭り` を押して別URLを作ります。
-
-古いお祭りが不要になった場合は、お店側の設定から `このお祭りを削除` を押します。削除すると、そのお祭りの設定、売上、履歴、お客さんの残高は消え、作成TOPへ戻ります。
-
-Reown側のAllowed Domainsには、Vercelの公開URLを追加してください。
+```text
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=ReownのProject ID
+```
 
 ## Mantle Sepolia 実決済
 
