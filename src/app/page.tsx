@@ -1246,22 +1246,30 @@ function SettingsScreen({
         <p className="field-label">支払いモード</p>
         <div className="mt-2 grid grid-cols-2 gap-2">
           <button
-            className={`touch-button small-button ${
-              draft.paymentMode === "demo" ? "bg-[#ffdf63]" : "bg-[#f7efe2]"
+            className={`touch-button border-4 text-base ${
+              draft.paymentMode === "demo"
+                ? "border-[#d84630] bg-[#ffdf63] text-[#23190b] shadow-[0_6px_0_rgba(91,52,20,0.18)]"
+                : "border-[#ead7aa] bg-[#f7efe2] text-[#6b4b2f]"
             }`}
             type="button"
+            aria-pressed={draft.paymentMode === "demo"}
             onClick={() => setDraft((current) => ({ ...current, paymentMode: "demo" }))}
           >
-            れんしゅう
+            <span className="block">れんしゅう</span>
+            {draft.paymentMode === "demo" ? <span className="mt-1 block text-xs">選択中</span> : null}
           </button>
           <button
-            className={`touch-button small-button ${
-              draft.paymentMode === "mantle-sepolia" ? "bg-[#7bd7c6]" : "bg-[#f7efe2]"
+            className={`touch-button border-4 text-base ${
+              draft.paymentMode === "mantle-sepolia"
+                ? "border-[#d84630] bg-[#7bd7c6] text-[#12352f] shadow-[0_6px_0_rgba(91,52,20,0.18)]"
+                : "border-[#ead7aa] bg-[#f7efe2] text-[#6b4b2f]"
             }`}
             type="button"
+            aria-pressed={draft.paymentMode === "mantle-sepolia"}
             onClick={() => setDraft((current) => ({ ...current, paymentMode: "mantle-sepolia" }))}
           >
-            test MNT
+            <span className="block">test MNT</span>
+            {draft.paymentMode === "mantle-sepolia" ? <span className="mt-1 block text-xs">選択中</span> : null}
           </button>
         </div>
         <p className="mt-3 text-sm font-bold leading-6 text-[#6b4b2f]">
