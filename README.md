@@ -127,6 +127,13 @@ UPSTASH_REDIS_REST_TOKEN=Upstash RedisのREST Token
 NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=ReownのProject ID
 ```
 
+VercelのStorage連携で以下の名前が入る場合も、そのまま使えます。
+
+```text
+KV_REST_API_URL
+KV_REST_API_TOKEN
+```
+
 この環境変数がある場合、保存先は自動でUpstash Redisになります。ない場合は、ローカル開発用として `data/festivals/{festivalId}.json` に保存します。
 
 公開後は、まずアプリのトップURLを共有します。使う人は `お祭りURLを作る` を押して自分たちのお祭りを作ります。
