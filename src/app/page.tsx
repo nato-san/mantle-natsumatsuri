@@ -1336,9 +1336,6 @@ function SettingsScreen({
 
       <div className="mt-4 flex items-center justify-between gap-3">
         <h2 className="text-2xl font-black">お店</h2>
-        <button className="touch-button small-button bg-[#ffdf63]" type="button" onClick={addDraftShop}>
-          ＋ お店を追加
-        </button>
       </div>
 
       <div className="mt-3 grid gap-4">
@@ -1440,6 +1437,9 @@ function SettingsScreen({
             </div>
           </article>
         ))}
+        <button className="touch-button border-4 border-white bg-[#ffdf63] text-xl shadow-[0_8px_0_rgba(91,52,20,0.14)]" type="button" onClick={addDraftShop}>
+          ＋ お店を追加
+        </button>
       </div>
 
       <section className="mt-5 rounded-lg border border-[#ead7aa] bg-[#fff0c2] p-4">
