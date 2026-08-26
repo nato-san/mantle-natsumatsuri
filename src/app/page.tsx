@@ -750,9 +750,6 @@ function HomeScreen({
           <h1 className="mt-2 text-4xl font-black leading-tight text-[#25130a] sm:text-6xl">
             お祭りURLを作って、共有しよう！
           </h1>
-          <p className="mt-4 max-w-xl text-lg font-bold leading-8 text-[#6b4b2f]">
-            共有した仲間と、お店端末とお客さん端末に分かれてお祭り遊びができるよ。
-          </p>
         </div>
 
         <div className="grid flex-1 content-center gap-4">
