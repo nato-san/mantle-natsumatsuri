@@ -51,6 +51,7 @@ export type FestivalState = {
 };
 
 export type FestivalResponse = FestivalState & {
+  festivalId: string;
   currentCustomer: Customer;
 };
 

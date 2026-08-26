@@ -5,7 +5,9 @@ import { mantleSepolia } from "./mantle-sepolia";
 import type { Customer, FestivalState, PaymentMode, PaymentRecord, Shop } from "./festival-types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
-const DATA_FILE = path.join(DATA_DIR, "festival-state.json");
+const FESTIVALS_DIR = path.join(DATA_DIR, "festivals");
+const LEGACY_DATA_FILE = path.join(DATA_DIR, "festival-state.json");
+const DEFAULT_FESTIVAL_ID = "wagaya";
 const INITIAL_BALANCE = 10;
 const INITIAL_EXCHANGE_RATE = 100;
 
@@ -53,6 +55,18 @@ export function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+export function normalizeFestivalId(value?: string | null) {
+  const normalized = (value || DEFAULT_FESTIVAL_ID)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
+
+  return normalized || DEFAULT_FESTIVAL_ID;
+}
+
 function isAddressLike(value?: string) {
   return /^0x[a-fA-F0-9]{40}$/.test(value || "");
 }
@@ -80,39 +94,121 @@ export function createCustomer(customerId: string, count: number): Customer {
   };
 }
 
-async function saveState(state: FestivalState) {
-  await mkdir(DATA_DIR, { recursive: true });
-  await writeFile(DATA_FILE, JSON.stringify(state, null, 2));
+function getRedisConfig() {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!url || !token) {
+    return null;
+  }
+
+  return { url: url.replace(/\/$/, ""), token };
 }
 
-export async function readState(): Promise<FestivalState> {
+function getRedisKey(festivalId: string) {
+  return `mantle-natsumatsuri:festival:${normalizeFestivalId(festivalId)}`;
+}
+
+function getFestivalFile(festivalId: string) {
+  return path.join(FESTIVALS_DIR, `${normalizeFestivalId(festivalId)}.json`);
+}
+
+async function readStoredState(festivalId: string) {
+  const redis = getRedisConfig();
+
+  if (redis) {
+    const response = await fetch(`${redis.url}/get/${encodeURIComponent(getRedisKey(festivalId))}`, {
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw new Error("redis_read_failed");
+    }
+
+    const payload = (await response.json()) as { result: string | null };
+    return payload.result;
+  }
+
+  return readFile(getFestivalFile(festivalId), "utf8");
+}
+
+async function saveState(festivalId: string, state: FestivalState) {
+  const redis = getRedisConfig();
+
+  if (redis) {
+    const response = await fetch(`${redis.url}/set/${encodeURIComponent(getRedisKey(festivalId))}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(state),
+    });
+
+    if (!response.ok) {
+      throw new Error("redis_write_failed");
+    }
+
+    return;
+  }
+
+  await mkdir(FESTIVALS_DIR, { recursive: true });
+  await writeFile(getFestivalFile(festivalId), JSON.stringify(state, null, 2));
+}
+
+function normalizeState(parsed: Partial<FestivalState>): FestivalState {
+  return {
+    festivalName: parsed.festivalName || initialState.festivalName,
+    exchangeRateJpyPerMnt:
+      typeof parsed.exchangeRateJpyPerMnt === "number" && parsed.exchangeRateJpyPerMnt > 0
+        ? parsed.exchangeRateJpyPerMnt
+        : initialState.exchangeRateJpyPerMnt,
+    paymentMode: parsed.paymentMode === "mantle-sepolia" ? "mantle-sepolia" : "demo",
+    shops: Array.isArray(parsed.shops) && parsed.shops.length > 0 ? parsed.shops : defaultShops,
+    customers: Array.isArray(parsed.customers) ? parsed.customers : [],
+    payments: Array.isArray(parsed.payments) ? parsed.payments.map(normalizePayment) : [],
+  };
+}
+
+export async function readState(festivalId = DEFAULT_FESTIVAL_ID): Promise<FestivalState> {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+
   try {
-    const raw = await readFile(DATA_FILE, "utf8");
+    const raw = await readStoredState(normalizedFestivalId);
+    if (!raw) {
+      throw new Error("festival_not_found");
+    }
+
     const parsed = JSON.parse(raw) as Partial<FestivalState>;
 
-    return {
-      festivalName: parsed.festivalName || initialState.festivalName,
-      exchangeRateJpyPerMnt:
-        typeof parsed.exchangeRateJpyPerMnt === "number" && parsed.exchangeRateJpyPerMnt > 0
-          ? parsed.exchangeRateJpyPerMnt
-          : initialState.exchangeRateJpyPerMnt,
-      paymentMode: parsed.paymentMode === "mantle-sepolia" ? "mantle-sepolia" : "demo",
-      shops: Array.isArray(parsed.shops) && parsed.shops.length > 0 ? parsed.shops : defaultShops,
-      customers: Array.isArray(parsed.customers) ? parsed.customers : [],
-      payments: Array.isArray(parsed.payments) ? parsed.payments.map(normalizePayment) : [],
-    };
+    return normalizeState(parsed);
   } catch {
-    await saveState(initialState);
+    if (normalizedFestivalId === DEFAULT_FESTIVAL_ID && !getRedisConfig()) {
+      try {
+        const legacyRaw = await readFile(LEGACY_DATA_FILE, "utf8");
+        const legacyState = normalizeState(JSON.parse(legacyRaw) as Partial<FestivalState>);
+        await saveState(normalizedFestivalId, legacyState);
+        return legacyState;
+      } catch {
+        // Continue to fresh initial state.
+      }
+    }
+
+    await saveState(normalizedFestivalId, initialState);
     return initialState;
   }
 }
 
-export async function ensureCustomer(customerId: string) {
-  const state = await readState();
+export async function ensureCustomer(festivalId: string, customerId: string) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const currentCustomer = state.customers.find((customer) => customer.id === customerId);
 
   if (currentCustomer) {
-    return { ...state, currentCustomer };
+    return { ...state, festivalId: normalizedFestivalId, currentCustomer };
   }
 
   const nextCustomer = createCustomer(customerId, state.customers.length);
@@ -120,15 +216,17 @@ export async function ensureCustomer(customerId: string) {
     ...state,
     customers: [...state.customers, nextCustomer],
   };
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
 
-  return { ...nextState, currentCustomer: nextCustomer };
+  return { ...nextState, festivalId: normalizedFestivalId, currentCustomer: nextCustomer };
 }
 
 export async function updateSettings(
+  festivalId: string,
   nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "paymentMode" | "shops">,
 ) {
-  const state = await readState();
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const nextState: FestivalState = {
     ...state,
     festivalName: nextSettings.festivalName,
@@ -137,7 +235,7 @@ export async function updateSettings(
     shops: nextSettings.shops.length > 0 ? nextSettings.shops : state.shops,
   };
 
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
   return nextState;
 }
 
@@ -150,8 +248,9 @@ type PurchaseChainData = {
   payerAddress?: string;
 };
 
-export async function recordPurchase(customerId: string, shopId: string, chainData: PurchaseChainData = {}) {
-  const state = await readState();
+export async function recordPurchase(festivalId: string, customerId: string, shopId: string, chainData: PurchaseChainData = {}) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const customer = state.customers.find((item) => item.id === customerId);
   const shop = state.shops.find((item) => item.id === shopId);
 
@@ -194,13 +293,14 @@ export async function recordPurchase(customerId: string, shopId: string, chainDa
           ),
     payments: [payment, ...state.payments],
   };
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
 
   return { ok: true as const, payment, state: nextState };
 }
 
-export async function createOnchainOrder(customerId: string, shopId: string, payerAddress: string) {
-  const state = await readState();
+export async function createOnchainOrder(festivalId: string, customerId: string, shopId: string, payerAddress: string) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const customer = state.customers.find((item) => item.id === customerId);
   const shop = state.shops.find((item) => item.id === shopId);
 
@@ -239,13 +339,14 @@ export async function createOnchainOrder(customerId: string, shopId: string, pay
     ...state,
     payments: [payment, ...state.payments],
   };
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
 
   return { ok: true as const, payment, state: nextState };
 }
 
-export async function markOrderSubmitted(orderId: string, transactionHash: string) {
-  const state = await readState();
+export async function markOrderSubmitted(festivalId: string, orderId: string, transactionHash: string) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const payment = state.payments.find((item) => item.id === orderId);
 
   if (!payment || payment.mode !== "mantle-sepolia") {
@@ -266,13 +367,14 @@ export async function markOrderSubmitted(orderId: string, transactionHash: strin
         : item,
     ),
   };
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
 
   return { ok: true as const, payment: nextState.payments.find((item) => item.id === orderId), state: nextState };
 }
 
-export async function rejectOrder(orderId: string, errorMessage?: string) {
-  const state = await readState();
+export async function rejectOrder(festivalId: string, orderId: string, errorMessage?: string) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const now = new Date().toISOString();
   const nextState: FestivalState = {
     ...state,
@@ -287,13 +389,14 @@ export async function rejectOrder(orderId: string, errorMessage?: string) {
         : item,
     ),
   };
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
 
   return { ok: true as const, state: nextState };
 }
 
-export async function verifyOnchainOrder(orderId: string, transactionHash: string) {
-  const state = await readState();
+export async function verifyOnchainOrder(festivalId: string, orderId: string, transactionHash: string) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const payment = state.payments.find((item) => item.id === orderId);
 
   if (!payment || payment.mode !== "mantle-sepolia") {
@@ -337,13 +440,14 @@ export async function verifyOnchainOrder(orderId: string, transactionHash: strin
         : item,
     ),
   };
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
 
   return { ok: confirmed, reason: confirmed ? undefined : "tx_verification_failed", state: nextState };
 }
 
-export async function completeOrder(orderId: string) {
-  const state = await readState();
+export async function completeOrder(festivalId: string, orderId: string) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const payment = state.payments.find((item) => item.id === orderId);
 
   if (!payment) {
@@ -370,19 +474,20 @@ export async function completeOrder(orderId: string) {
         : item,
     ),
   };
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
 
   return { ok: true as const, state: nextState };
 }
 
-export async function resetFestivalActivity() {
-  const state = await readState();
+export async function resetFestivalActivity(festivalId: string) {
+  const normalizedFestivalId = normalizeFestivalId(festivalId);
+  const state = await readState(normalizedFestivalId);
   const nextState: FestivalState = {
     ...state,
     customers: state.customers.map((customer) => ({ ...customer, balanceMnt: INITIAL_BALANCE })),
     payments: [],
   };
 
-  await saveState(nextState);
+  await saveState(normalizedFestivalId, nextState);
   return nextState;
 }

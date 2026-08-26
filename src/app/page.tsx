@@ -13,6 +13,7 @@ type Screen = "home" | "customer" | "merchant" | "settings";
 
 const INITIAL_EXCHANGE_RATE = 100;
 const CUSTOMER_STORAGE_KEY = "mantle-natsumatsuri-customer-id";
+const FESTIVAL_STORAGE_KEY = "mantle-natsumatsuri-festival-id";
 
 const fallbackShops: Shop[] = [
   {
@@ -57,19 +58,64 @@ const fallbackCustomer: Customer = {
   createdAt: new Date(0).toISOString(),
 };
 
-function getCustomerId() {
+function normalizeFestivalId(value?: string | null) {
+  const normalized = (value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 48);
+
+  return normalized;
+}
+
+function getFestivalId() {
+  if (typeof window === "undefined") {
+    return "wagaya";
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const fromUrl = normalizeFestivalId(params.get("festival"));
+  const saved = normalizeFestivalId(window.localStorage.getItem(FESTIVAL_STORAGE_KEY));
+  const festivalId = fromUrl || saved || createId("festival").replace(/[^a-z0-9-]/g, "-").slice(0, 32);
+
+  window.localStorage.setItem(FESTIVAL_STORAGE_KEY, festivalId);
+
+  if (!fromUrl) {
+    params.set("festival", festivalId);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }
+
+  return festivalId;
+}
+
+function getCustomerId(festivalId: string) {
   if (typeof window === "undefined") {
     return fallbackCustomer.id;
   }
 
-  const saved = window.localStorage.getItem(CUSTOMER_STORAGE_KEY);
+  const storageKey = `${CUSTOMER_STORAGE_KEY}:${festivalId}`;
+  const saved = window.localStorage.getItem(storageKey);
   const customerId = saved || createId("customer");
-  window.localStorage.setItem(CUSTOMER_STORAGE_KEY, customerId);
+  window.localStorage.setItem(storageKey, customerId);
   return customerId;
 }
 
-async function fetchFestival(customerId: string) {
-  const response = await fetch(`/api/festival?customerId=${encodeURIComponent(customerId)}`, {
+function getFestivalApiUrl(festivalId: string, customerId?: string) {
+  const params = new URLSearchParams({
+    festivalId,
+  });
+
+  if (customerId) {
+    params.set("customerId", customerId);
+  }
+
+  return `/api/festival?${params.toString()}`;
+}
+
+async function fetchFestival(festivalId: string, customerId: string) {
+  const response = await fetch(getFestivalApiUrl(festivalId, customerId), {
     cache: "no-store",
   });
 
@@ -150,6 +196,7 @@ export default function Home() {
     query: { enabled: Boolean(walletAddress) },
   });
   const [screen, setScreen] = useState<Screen>("home");
+  const [festivalId, setFestivalId] = useState("");
   const [festival, setFestival] = useState<FestivalState>(initialState);
   const [currentCustomer, setCurrentCustomer] = useState<Customer>(fallbackCustomer);
   const [selectedShopId, setSelectedShopId] = useState(fallbackShops[0].id);
@@ -160,12 +207,21 @@ export default function Home() {
   const [walletMessage, setWalletMessage] = useState("");
 
   useEffect(() => {
+    const activeFestivalId = getFestivalId();
+    window.setTimeout(() => setFestivalId(activeFestivalId), 0);
+  }, []);
+
+  useEffect(() => {
+    if (!festivalId) {
+      return;
+    }
+
     let isActive = true;
-    const customerId = getCustomerId();
+    const customerId = getCustomerId(festivalId);
 
     async function refresh() {
       try {
-        const nextFestival = await fetchFestival(customerId);
+        const nextFestival = await fetchFestival(festivalId, customerId);
         if (!isActive) {
           return;
         }
@@ -198,7 +254,7 @@ export default function Home() {
       isActive = false;
       window.clearInterval(timer);
     };
-  }, [screen]);
+  }, [festivalId, screen]);
 
   const effectiveSelectedShopId = festival.shops.some((shop) => shop.id === selectedShopId)
     ? selectedShopId
@@ -230,7 +286,11 @@ export default function Home() {
   const selectedStats = shopStats.find((item) => item.shop.id === effectiveSelectedShopId) || shopStats[0];
 
   async function refreshFestival() {
-    const nextFestival = await fetchFestival(currentCustomer.id);
+    if (!festivalId) {
+      return;
+    }
+
+    const nextFestival = await fetchFestival(festivalId, currentCustomer.id);
     setFestival({
       festivalName: nextFestival.festivalName,
       exchangeRateJpyPerMnt: nextFestival.exchangeRateJpyPerMnt,
@@ -243,6 +303,10 @@ export default function Home() {
   }
 
   async function completePurchase(shop: Shop) {
+    if (!festivalId) {
+      return;
+    }
+
     const priceMnt = calculateMntPrice(shop.priceJpy, festival.exchangeRateJpyPerMnt);
 
     if (festival.paymentMode === "demo" && currentCustomer.balanceMnt < priceMnt) {
@@ -268,6 +332,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "create_onchain_order",
+            festivalId,
             customerId: currentCustomer.id,
             shopId: shop.id,
             payerAddress: walletAddress,
@@ -288,6 +353,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "submit_onchain_order",
+            festivalId,
             orderId: orderResult.payment.id,
             transactionHash,
           }),
@@ -308,6 +374,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "verify_onchain_order",
+            festivalId,
             orderId: orderResult.payment.id,
             transactionHash,
           }),
@@ -336,6 +403,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "purchase",
+          festivalId,
           customerId: currentCustomer.id,
           shopId: shop.id,
           mode: festival.paymentMode,
@@ -361,6 +429,7 @@ export default function Home() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "reject_onchain_order",
+            festivalId,
             orderId: pendingOrderId,
             errorMessage: error instanceof Error ? error.message : "wallet rejected",
           }),
@@ -390,12 +459,16 @@ export default function Home() {
   }
 
   async function completeHandOver(orderId: string) {
+    if (!festivalId) {
+      return;
+    }
+
     setStatusMessage("おわたしを記録中");
     try {
       const response = await fetch("/api/festival", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "complete_order", orderId }),
+        body: JSON.stringify({ action: "complete_order", festivalId, orderId }),
       });
 
       if (!response.ok) {
@@ -413,6 +486,10 @@ export default function Home() {
   async function saveSettings(
     nextSettings: Pick<FestivalState, "festivalName" | "exchangeRateJpyPerMnt" | "paymentMode" | "shops">,
   ) {
+    if (!festivalId) {
+      return false;
+    }
+
     setFestival((current) => ({ ...current, ...nextSettings }));
     setStatusMessage("設定を保存中");
 
@@ -422,6 +499,7 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "settings",
+          festivalId,
           ...nextSettings,
         }),
       });
@@ -434,6 +512,10 @@ export default function Home() {
   }
 
   async function resetDemo() {
+    if (!festivalId) {
+      return;
+    }
+
     setSuccessItemName(null);
     setConfirmShopId(null);
     setStatusMessage("残高と履歴をリセット中");
@@ -442,13 +524,33 @@ export default function Home() {
       await fetch("/api/festival", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset" }),
+        body: JSON.stringify({ action: "reset", festivalId }),
       });
       setStatusMessage("");
       await refreshFestival();
     } catch {
       setStatusMessage("リセットできません");
     }
+  }
+
+  function createNewFestival() {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nextFestivalId = createId("festival").replace(/[^a-z0-9-]/g, "-").slice(0, 32);
+    const params = new URLSearchParams(window.location.search);
+    params.set("festival", nextFestivalId);
+    window.localStorage.setItem(FESTIVAL_STORAGE_KEY, nextFestivalId);
+    window.history.pushState(null, "", `${window.location.pathname}?${params.toString()}`);
+    setFestival(initialState);
+    setCurrentCustomer(fallbackCustomer);
+    setSuccessItemName(null);
+    setSuccessPaymentId(null);
+    setConfirmShopId(null);
+    setStatusMessage("新しいお祭りを作っています");
+    setFestivalId(nextFestivalId);
+    setScreen("home");
   }
 
   return (
@@ -480,7 +582,7 @@ export default function Home() {
         ) : null}
 
         {screen === "home" ? (
-          <HomeScreen festivalName={festival.festivalName} onNavigate={setScreen} />
+          <HomeScreen festivalName={festival.festivalName} festivalId={festivalId} onNavigate={setScreen} />
         ) : null}
 
         {screen === "customer" ? (
@@ -506,6 +608,7 @@ export default function Home() {
 
         {screen === "merchant" ? (
           <MerchantScreen
+            festivalId={festivalId}
             selectedShopId={effectiveSelectedShopId}
             selectedStats={selectedStats}
             shopStats={shopStats}
@@ -514,6 +617,7 @@ export default function Home() {
             paymentMode={festival.paymentMode}
             onSelectShop={setSelectedShopId}
             onCompleteOrder={(orderId) => void completeHandOver(orderId)}
+            onCreateNewFestival={createNewFestival}
           />
         ) : null}
 
@@ -575,9 +679,11 @@ export default function Home() {
 
 function HomeScreen({
   festivalName,
+  festivalId,
   onNavigate,
 }: {
   festivalName: string;
+  festivalId: string;
   onNavigate: (screen: Screen) => void;
 }) {
   return (
@@ -585,6 +691,11 @@ function HomeScreen({
       <div className="mb-8">
         <p className="text-sm font-black uppercase tracking-[0.18em] text-[#9a3f2c]">Mantleなつまつり</p>
         <h1 className="mt-2 text-4xl font-black leading-tight text-[#25130a] sm:text-6xl">{festivalName}</h1>
+        {festivalId ? (
+          <p className="mt-3 inline-block rounded-full bg-white px-4 py-2 text-sm font-black text-[#7b4b21]">
+            おまつりID: {festivalId}
+          </p>
+        ) : null}
       </div>
 
       <div className="grid flex-1 content-center gap-4 sm:grid-cols-2">
@@ -769,6 +880,7 @@ function CustomerScreen({
 }
 
 function MerchantScreen({
+  festivalId,
   selectedShopId,
   selectedStats,
   shopStats,
@@ -777,7 +889,9 @@ function MerchantScreen({
   paymentMode,
   onSelectShop,
   onCompleteOrder,
+  onCreateNewFestival,
 }: {
+  festivalId: string;
   selectedShopId: string;
   selectedStats?: {
     shop: Shop;
@@ -796,10 +910,16 @@ function MerchantScreen({
   paymentMode: PaymentMode;
   onSelectShop: (shopId: string) => void;
   onCompleteOrder: (orderId: string) => void;
+  onCreateNewFestival: () => void;
 }) {
   if (!selectedStats) {
     return null;
   }
+
+  const festivalUrl =
+    typeof window === "undefined" || !festivalId
+      ? ""
+      : `${window.location.origin}${window.location.pathname}?festival=${encodeURIComponent(festivalId)}`;
 
   return (
     <section className="flex-1 bg-[#17201d] px-4 py-5 text-white">
@@ -810,6 +930,31 @@ function MerchantScreen({
           <p className="pb-1 text-sm font-bold text-white/70">
             {paymentMode === "mantle-sepolia" ? "Mantle Sepolia / On-chain" : "Mantle Sepolia / Demo"}
           </p>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg border border-white/10 bg-[#22312c] p-4">
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#99dac7]">Festival URL</p>
+        <p className="mt-2 break-all font-mono text-sm font-black text-white/80">{festivalUrl || "準備中"}</p>
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            className="rounded-md bg-[#f8d45d] px-3 py-3 text-sm font-black text-[#23190b]"
+            type="button"
+            onClick={() => {
+              if (festivalUrl) {
+                void navigator.clipboard?.writeText(festivalUrl);
+              }
+            }}
+          >
+            URLをコピー
+          </button>
+          <button
+            className="rounded-md bg-white/10 px-3 py-3 text-sm font-black text-white"
+            type="button"
+            onClick={onCreateNewFestival}
+          >
+            新しいお祭り
+          </button>
         </div>
       </div>
 

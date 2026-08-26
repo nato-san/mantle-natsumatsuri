@@ -4,6 +4,8 @@
 
 ローカル共有デモとして、お店端末と複数のお客さん端末を分けて遊べます。支払いモードを切り替えると、Mantle Sepolia Testnet の test MNT 決済も使えます。
 
+Vercelに公開すると、家ごとに別々のお祭りURLを作れます。Aさんの家とBさんの家が同じ時間に使っても、URLのお祭りIDが違えば設定・お客さん・売上履歴は混ざりません。
+
 ## できること
 
 - お客さん画面
@@ -15,6 +17,8 @@
 
 - お店画面
   - 店舗を切り替えて売上を確認
+  - このお祭りURLを確認、コピー
+  - 新しいお祭りURLを作成
   - 店舗別売上、販売件数、決済履歴を表示
   - 全店舗合計を表示
   - Mantle Sepolia / Demo または Mantle Sepolia / On-chain として明示
@@ -77,15 +81,45 @@ http://192.168.11.17:3000
 
 このアプリは `src/app/api/festival` の共有APIで状態を保存します。
 
-お客さん端末ごとにブラウザ内で別IDを作るため、複数人で開いても所持金は別々です。お客さんが商品を買うと、共有APIに購入履歴が保存され、お店画面に反映されます。
+お祭りごとにURLへ `festival` IDを付けます。
+
+```text
+https://example.vercel.app/?festival=festival-123
+```
+
+同じURLを開いた端末は同じお祭りに参加します。違う `festival` IDのURLを開いた端末は、別のお祭りになります。
+
+お客さん端末ごとにブラウザ内で別IDを作るため、複数人で開いても所持金は別々です。お客さんIDはお祭りIDごとに分かれるため、Aさん宅のお客さん残高とBさん宅のお客さん残高は混ざりません。お客さんが商品を買うと、そのお祭りの共有APIに購入履歴が保存され、同じURLのお店画面に反映されます。
 
 現在の保存先はローカルファイルです。
 
 ```text
-data/festival-state.json
+data/festivals/{festivalId}.json
 ```
 
+古いローカル保存がある場合は、初期のお祭りID `wagaya` として `data/festival-state.json` から自動移行します。
+
 このファイルには当日の履歴やお客さん情報が入るため、GitHubには含めません。
+
+## Vercelで公開する
+
+Vercelに公開すると、誰でもスマホやPCから使えます。
+
+ただしVercel上ではローカルファイル保存が長期保存に向かないため、公開して家ごとにちゃんと使う場合は Upstash Redis を使います。
+
+Vercelの環境変数に以下を設定してください。
+
+```text
+UPSTASH_REDIS_REST_URL=Upstash RedisのREST URL
+UPSTASH_REDIS_REST_TOKEN=Upstash RedisのREST Token
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=ReownのProject ID
+```
+
+この環境変数がある場合、保存先は自動でUpstash Redisになります。ない場合は、ローカル開発用として `data/festivals/{festivalId}.json` に保存します。
+
+公開後は、お店画面の `Festival URL` を家族の端末で開くと同じお祭りに入れます。別の家で使う場合は、お店画面の `新しいお祭り` を押して別URLを作ります。
+
+Reown側のAllowed Domainsには、Vercelの公開URLを追加してください。
 
 ## Mantle Sepolia 実決済
 

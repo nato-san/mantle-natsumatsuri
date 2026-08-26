@@ -8,6 +8,7 @@ import {
   recordPurchase,
   rejectOrder,
   resetFestivalActivity,
+  normalizeFestivalId,
   updateSettings,
   verifyOnchainOrder,
 } from "@/lib/festival-store";
@@ -16,7 +17,9 @@ import type { PaymentMode, PaymentRecord, Shop } from "@/lib/festival-types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type FestivalAction =
+type FestivalAction = {
+  festivalId?: string;
+} & (
   | {
       action: "purchase";
       customerId: string;
@@ -62,24 +65,34 @@ type FestivalAction =
     }
   | {
       action: "reset";
-    };
+    }
+);
+
+function getFestivalId(request: NextRequest, body?: { festivalId?: string }) {
+  return normalizeFestivalId(body?.festivalId || request.nextUrl.searchParams.get("festivalId"));
+}
 
 export async function GET(request: NextRequest) {
   const customerId = request.nextUrl.searchParams.get("customerId");
+  const festivalId = getFestivalId(request);
 
   if (customerId) {
-    const state = await ensureCustomer(customerId);
+    const state = await ensureCustomer(festivalId, customerId);
     return NextResponse.json(state);
   }
 
-  return NextResponse.json(await readState());
+  return NextResponse.json({
+    ...(await readState(festivalId)),
+    festivalId,
+  });
 }
 
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as FestivalAction;
+  const festivalId = getFestivalId(request, body);
 
   if (body.action === "purchase") {
-    const result = await recordPurchase(body.customerId, body.shopId, {
+    const result = await recordPurchase(festivalId, body.customerId, body.shopId, {
       mode: body.mode,
       status: body.status,
       transactionHash: body.transactionHash,
@@ -91,18 +104,18 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.action === "create_onchain_order") {
-    const result = await createOnchainOrder(body.customerId, body.shopId, body.payerAddress);
+    const result = await createOnchainOrder(festivalId, body.customerId, body.shopId, body.payerAddress);
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   }
 
   if (body.action === "submit_onchain_order") {
-    const result = await markOrderSubmitted(body.orderId, body.transactionHash);
+    const result = await markOrderSubmitted(festivalId, body.orderId, body.transactionHash);
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   }
 
   if (body.action === "verify_onchain_order") {
     try {
-      const result = await verifyOnchainOrder(body.orderId, body.transactionHash);
+      const result = await verifyOnchainOrder(festivalId, body.orderId, body.transactionHash);
       return NextResponse.json(result, { status: result.ok ? 200 : 400 });
     } catch (error) {
       return NextResponse.json(
@@ -117,17 +130,17 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.action === "reject_onchain_order") {
-    const result = await rejectOrder(body.orderId, body.errorMessage);
+    const result = await rejectOrder(festivalId, body.orderId, body.errorMessage);
     return NextResponse.json(result);
   }
 
   if (body.action === "complete_order") {
-    const result = await completeOrder(body.orderId);
+    const result = await completeOrder(festivalId, body.orderId);
     return NextResponse.json(result, { status: result.ok ? 200 : 400 });
   }
 
   if (body.action === "settings") {
-    const state = await updateSettings({
+    const state = await updateSettings(festivalId, {
       festivalName: body.festivalName,
       exchangeRateJpyPerMnt: body.exchangeRateJpyPerMnt,
       paymentMode: body.paymentMode,
@@ -137,7 +150,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (body.action === "reset") {
-    const state = await resetFestivalActivity();
+    const state = await resetFestivalActivity(festivalId);
     return NextResponse.json({ ok: true, state });
   }
 
