@@ -2,9 +2,9 @@
 
 子どもの夏祭りごっこで、MNTを使った屋台体験をするためのWebアプリです。
 
-ローカル共有デモとして、お店端末と複数のお客さん端末を分けて遊べます。支払いモードを切り替えると、Mantle Sepolia Testnet の test MNT 決済も使えます。
+お店端末と複数のお客さん端末を分けて遊べます。支払いモードを切り替えると、Mantle Sepolia Testnet の test MNT 決済も使えます。
 
-Vercelに公開すると、家ごとに別々のお祭りURLを作れます。Aさんの家とBさんの家が同じ時間に使っても、URLのお祭りIDが違えば設定・お客さん・売上履歴は混ざりません。
+公開されたアプリでは、家ごとに別々のお祭りURLを作れます。Aさんの家とBさんの家が同じ時間に使っても、URLのお祭りIDが違えば設定・お客さん・売上履歴は混ざりません。
 
 アプリ自体を共有する時は、`?festival=...` が付いていないURLを案内します。開いた人はトップの `お祭りURLを作る` から自分たち専用のお祭りURLを作れます。
 
@@ -111,137 +111,15 @@ https://example.vercel.app/?festival=festival-123
 
 Aさんの家とBさんの家が同じ時間に使っても、お祭りURLが違えば、設定・お客さん・売上履歴は混ざりません。
 
-## データ共有の仕組み
-
-このアプリは `src/app/api/festival` の共有APIで状態を保存します。
-
-アプリのトップURL:
-
-```text
-https://example.vercel.app/
-```
-
-このURLから `お祭りURLを作る` を押すと、その仲間専用のお祭りURLができます。
-
-お祭りごとにURLへ `festival` IDを付けます。
-
-```text
-https://example.vercel.app/?festival=festival-123
-```
-
-同じURLを開いた端末は同じお祭りに参加します。違う `festival` IDのURLを開いた端末は、別のお祭りになります。
-
-お客さん端末ごとにブラウザ内で別IDを作るため、複数人で開いても所持金は別々です。お客さんIDはお祭りIDごとに分かれるため、Aさん宅のお客さん残高とBさん宅のお客さん残高は混ざりません。お客さんが商品を買うと、そのお祭りの共有APIに購入履歴が保存され、同じURLのお店画面に反映されます。
-
-ローカルで動かす場合、保存先はローカルファイルです。
-
-```text
-data/festivals/{festivalId}.json
-```
-
-Vercelで公開してUpstash Redisを接続している場合、保存先はRedisになります。
-
-古いローカル保存がある場合は、初期のお祭りID `wagaya` として `data/festival-state.json` から自動移行します。
-
-このファイルには当日の履歴やお客さん情報が入るため、GitHubには含めません。
-
-## セットアップ方法
-
-### ローカルで動かす
-
-依存関係を入れます。
-
-```bash
-npm install
-```
-
-開発用に起動します。
-
-```bash
-npm run dev -- --hostname 0.0.0.0 --port 3000
-```
-
-同じMacで見る場合:
-
-```text
-http://127.0.0.1:3000
-```
-
-スマホや別端末で見る場合は、アプリを起動しているPC/Macと同じWi-Fiにつなぎ、そのPC/MacのIPアドレスで開きます。
-
-例:
-
-```text
-http://192.168.11.17:3000
-```
-
-本番ビルドで確認する場合はこちらです。
-
-```bash
-npm run build
-npm run start -- --hostname 0.0.0.0 --port 3000
-```
-
-### Vercelで公開する
-
-Vercelに公開すると、誰でもスマホやPCから使えます。
-
-ただしVercel上ではローカルファイル保存が長期保存に向かないため、公開して家ごとにちゃんと使う場合は Upstash Redis を使います。
-
-VercelのStorage連携でUpstash Redisを接続すると、自動で環境変数が追加されます。
-
-このアプリは、以下の環境変数名に対応しています。
-
-```text
-UPSTASH_REDIS_REST_URL
-UPSTASH_REDIS_REST_TOKEN
-KV_REST_API_URL
-KV_REST_API_TOKEN
-STORAGE_URL
-STORAGE_TOKEN
-STORAGE_REST_API_URL
-STORAGE_REST_API_TOKEN
-STORAGE_KV_REST_API_URL
-STORAGE_KV_REST_API_TOKEN
-```
-
-WalletConnectを使う場合は、ReownのProject IDも設定します。
-
-```text
-NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=ReownのProject ID
-```
-
 ## Mantle Sepolia 実決済
 
 お祭り設定で支払いモードを `test MNT` にすると、お客さん端末のウォレットから Mantle Sepolia Testnet で送金します。
 
 test MNTモードでは、子ども画面の `のこり MNT` は表示しません。実際の残高はウォレット側で確認するためです。
 
-ウォレット接続には Reown AppKit / WalletConnect を使います。特定ウォレットをただ開くのではなく、ウォレット接続後に購入ボタンから送金し、購入時はウォレット側で送金を承認します。
-
-スマホでは同じ端末内のウォレットアプリへ遷移する接続を想定しています。安定して確認する場合は、ローカルIPアドレスよりもHTTPSで公開したURLを使うのがおすすめです。
-
-Mantle Sepolia の接続情報:
-
-- Chain ID: `5003`
-- RPC URL: `https://rpc.sepolia.mantle.xyz`
-- Currency: `MNT`
-- Explorer: `https://explorer.sepolia.mantle.xyz`
-
 使う前に、お店ごとに `test MNTの受け取り先` を設定してください。受け取り先が未設定だと、子ども側では購入できません。
 
-購入が成功すると、決済履歴に以下を保存します。
-
-- `payerAddress`
-- `recipientAddress`
-- `transactionHash`
-- `blockNumber`
-- `gasUsed`
-- `status`
-
-注文状態は `pending_wallet` → `submitted` → `confirmed` → `completed` で進みます。ウォレット拒否は `rejected`、チェーン検証失敗は `failed` になります。
-
-オンチェーンの `confirmed` はクライアントの自己申告ではなく、サーバー側でTx receipt、from、to、valueをMantle Sepoliaから取得して検証してから記録します。
+購入する時は、ウォレット側で送金を承認します。
 
 お店側には、購入した商品、MNT金額、支払い元ウォレット、Mantle Sepolia Explorerへのリンクが表示されます。
 
@@ -251,21 +129,6 @@ Mantle Sepolia の接続情報:
 
 うまくいかない時は、お店側設定から支払いモードを `れんしゅう` に戻すと、オンチェーンなしで遊べます。
 
-## 技術構成
+## 開発・セットアップ
 
-- Next.js
-- TypeScript
-- Tailwind CSS
-- App Router
-- ローカル共有API
-- viem
-- wagmi
-- Reown AppKit / WalletConnect
-- Mantle Sepolia Testnet
-
-## 確認コマンド
-
-```bash
-npm run lint
-npm run build
-```
+開発環境で動かす方法、Vercel公開、Upstash Redis、WalletConnect、確認コマンドなどは [SETUP.md](./SETUP.md) にまとめています。
