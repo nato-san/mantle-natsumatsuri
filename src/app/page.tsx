@@ -77,8 +77,7 @@ function getFestivalId() {
 
   const params = new URLSearchParams(window.location.search);
   const fromUrl = normalizeFestivalId(params.get("festival"));
-  const saved = normalizeFestivalId(window.localStorage.getItem(FESTIVAL_STORAGE_KEY));
-  const festivalId = fromUrl || saved;
+  const festivalId = fromUrl;
 
   if (festivalId) {
     window.localStorage.setItem(FESTIVAL_STORAGE_KEY, festivalId);
